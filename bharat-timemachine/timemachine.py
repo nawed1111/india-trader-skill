@@ -536,6 +536,21 @@ def normalize_plan(raw, src="flags"):
     if datetime.date.fromisoformat(date) in india.MUHURAT:
         raise TMError("the plan is on the Muhurat session: the time machine replays normal sessions only")
     entry, stop, target = (_num(raw.get(k), k) for k in ("entry", "stop", "target"))
+    fut = None
+    if raw.get("instrument") == "fut":
+        # a futures plan replays the index's own bars: its levels go back to index points
+        ratio = _num(raw.get("basis_ratio"), "basis_ratio")
+        if ratio <= 0:
+            raise TMError("basis_ratio must be above 0")
+        fut = {"contract": raw.get("contract"), "lot": raw.get("lot"), "expiry": raw.get("expiry"),
+               "basis_ratio": ratio, "basis_date": raw.get("basis_date"),
+               "basis_estimated": bool(raw.get("basis_estimated")),
+               "entry": entry, "stop": stop, "target": target, "risk_per_unit": round(entry - stop, 2)}
+        ix = raw.get("index") or {}
+        if all(ix.get(k) is not None for k in ("entry", "stop", "target")):
+            entry, stop, target = (_num(ix[k], "index." + k) for k in ("entry", "stop", "target"))
+        else:
+            entry, stop, target = entry / ratio, stop / ratio, target / ratio
     long = side == "buy"
     if long and not stop < entry < target:
         raise TMError("a buy needs stop < entry < target (got stop %s, entry %s, target %s)" % (stop, entry, target))
@@ -578,7 +593,7 @@ def normalize_plan(raw, src="flags"):
         "target_r": round(((target - entry) if long else (entry - target)) / risk, 2),
         "opening_range": dict(orng, minutes=or_min) if isinstance(orng, dict) else {"minutes": or_min},
         "stop_rule": str(raw.get("stop_rule") or "auto"), "interval": "5m",
-        "flat_by": raw.get("flat_by"), "from": src,
+        "flat_by": raw.get("flat_by"), "from": src, "fut": fut,
     }
 
 
@@ -728,7 +743,12 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
                    "note": "skipped: the history replay knows the opening-range breakout (orb) only, "
                            "this plan's setup is %r" % plan["setup"]}
     last_bar = bars[-1]
+    fut = None
+    if plan.get("fut"):
+        r = plan["fut"]["basis_ratio"]
+        fut = dict(plan["fut"], **{k: round(mc[k] * r, 2) for k in ("median_close", "p5_close", "p95_close")})
     return {
+        "fut": fut,
         "created_by": "bharat-timemachine",
         "created_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source,
@@ -794,6 +814,14 @@ def report(doc):
             lines.append("History: the same rule never fired in those %d sessions." % h["sessions"])
     else:
         lines.append("History: " + h.get("note", "skipped."))
+    f = doc.get("fut")
+    if f:
+        lines += ["", "Futures %s (lot %s): futures price = index x %.6f from %s%s. Entry %.2f, stop %.2f, target %.2f "
+                  "(risk %.2f a unit). Price at %s: median %.2f, 90 %% between %.2f and %.2f. The odds and R are "
+                  "the index's: a constant basis moves every level the same way."
+                  % (f["contract"], f["lot"], f["basis_ratio"], f["basis_date"],
+                     " (ESTIMATED: an old basis)" if f["basis_estimated"] else "", f["entry"], f["stop"], f["target"],
+                     f["risk_per_unit"], until, f["median_close"], f["p5_close"], f["p95_close"])]
     lines += ["", doc["verdict"]] + list(doc.get("verdict_notes") or []) + [""]
     for w in doc.get("warnings") or []:
         lines.append("Note: " + w + ".")
