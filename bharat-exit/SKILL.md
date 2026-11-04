@@ -139,6 +139,19 @@ stop and target keep their distance in points from it. Give it before
 sizing. Without it, size a limit order at the estimate (`size.py --limit`):
 bharat-risk blocks a market entry on the bhavcopy estimate.
 
+## Index options (P3, buying only)
+
+From an options `trader/entry.json` the stop and target rules run on the
+index (a put's are mirrored: its stop goes above the index, its target
+below), then each level becomes a premium: Black-76 on the forward at the
+entry time, with the entry's implied volatility held constant. The premium
+stop ticks down (never under Rs 0.05: a clamped stop can lose the whole
+premium), the target ticks up. A target that the model says cannot pay even
+if the index reaches it at the flat-by (the time decay eats the move) is
+refused. The plan keeps both: `entry`/`stop`/`target` as premiums and
+`index_entry`/`index_stop`/`index_target`. `--entry P` on an options plan is
+the premium you paid; it sets the implied volatility.
+
 ## What it never does
 
 It never places an order, never sizes a position, never widens a stop to make

@@ -113,9 +113,15 @@ class Repo(unittest.TestCase):
             return india.inr(v)[3:]
 
         for name in dir(EX):
-            if name.isupper() and not name.startswith("OPT_"):   # ponytail: OPT_* join when the README's options section lands
+            if name.isupper():
                 v = getattr(EX, name)
                 self.assertTrue(any(f in readme for f in forms(v)), "%s = %r is not in the README" % (name, v))
+
+    def test_readme_options_words(self):
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        for words in ("buying only", "implied volatility", "held constant", "STT on its intrinsic value"):
+            self.assertIn(words, readme)
 
     def test_no_em_dashes_and_no_personal_email(self):
         for path in every_text_file():

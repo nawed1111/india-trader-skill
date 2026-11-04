@@ -180,6 +180,25 @@ For an NFO order (`instrument: fut`), with `allow_fno` on:
 The F&O ban list does not apply to index futures (it lists stocks only).
 Getting out is never blocked: these are entry checks.
 
+## Index options (P3, buying only)
+
+For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
+`allow_fno` on:
+
+- **short** any sell that opens or adds to a short option blocks, whatever
+  the config says: option selling is not part of this pack. Selling an
+  option you hold is an exit.
+- **entry** anything but a limit order blocks.
+- **premium** a premium estimated from the bhavcopy blocks: give the live
+  premium (`premium_source: user`, from bharat-exit --entry).
+- **liquidity** open interest under `min_option_oi`, or no trades in the
+  last bhavcopy, blocks.
+- **expiry** an expired contract, a missing expiry, or a new entry on
+  expiry day at or after `expiry_day_cutoff` (default 13:00) blocks.
+- **costs** use Zerodha's option charges; the cost-share check catches a
+  cheap option (Rs 40 of brokerage alone on a Rs 195 position).
+- **lots** more than `max_lots`; `max_premium_inr` caps the premium.
+
 ## What it never does
 
 It never places an order, never edits an order to make it pass, never

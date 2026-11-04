@@ -161,6 +161,18 @@ The report adds the futures view: "futures price = index x RATIO from
 DATE", the futures entry, stop and target, and the price at the end of the
 replay in futures points.
 
+## Index options (P3, buying only)
+
+An options plan replays the index exactly as for a stock or a future, and
+at every bar prices the option with Black-76 (the path's index, the time
+left to expiry at that bar, the plan's implied volatility, held constant).
+Stop and target are decided on the premium, so time decay can stop a trade
+out while the index stands still. The odds, the green share and R are the
+premium's; the report names the implied volatility, says it is held
+constant, and gives the premium at the end of the replay. The history
+replay does the same on past sessions with the plan's strike distance and
+time to expiry (past sessions' implied volatilities are not known).
+
 ## What it never does
 
 It never places an order, never sizes a position, never changes the plan,

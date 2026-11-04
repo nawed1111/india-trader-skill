@@ -152,6 +152,26 @@ bars as usual and adds a `future` block to the result and to
   and names the next one.
 - `watchlist` is for stocks; check the indices one at a time.
 
+## Index options (P3, buying only)
+
+`check NIFTY --instrument opt --right CE` (or `PE`, or BANKNIFTY) reads the
+signal on the index: a call on a close above the opening-range high, a put
+on a close BELOW the opening-range low (the ORB's mirror). This pack only
+buys options; it never writes them. The result adds `option`:
+
+- `contract`, `strike` (ATM, or `--steps-otm N` strikes out of the money:
+  higher for a call, lower for a put), `right`, `expiry` (the nearest that
+  is not today, or `--expiry YYYY-MM-DD`), `lot`, `oi`, `volume`.
+- `premium`: `--premium P` (the price on Kite) sets the implied volatility
+  from it (`premium_source: user`). Without it the premium is estimated:
+  Black-76 on the forward (the index x the put-call parity ratio from the
+  last bhavcopy, same expiry), with the implied volatility of the last
+  bhavcopy close, held constant (`premium_source: estimated`).
+- A strike under `min_option_oi` (config, default 50,000 units) or with no
+  trades in the bhavcopy warns (`illiquid`); bharat-risk blocks it.
+- A premium under its intrinsic value has no implied volatility: refused
+  with the reason, never a number.
+
 ## What it never does
 
 It never places an order, never sizes a position, never sets the stop (that

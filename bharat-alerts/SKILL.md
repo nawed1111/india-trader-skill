@@ -72,6 +72,13 @@ and adds an `expiry` rule for the contract, with no date, so it rings on
 the day before expiry and on expiry day (from the bhavcopy's dates: 20 and
 23 Nov 2026 for NIFTY26NOVFUT, since 24 Nov is a holiday).
 
+For an options plan, `--from-plan` watches the INDEX levels (`index_stop`,
+`index_target`; free option quotes do not exist), and every message says
+they are index levels from the model. A put's stop rings when the index
+rises to it. It also adds the contract's `expiry` rule and a 15:00 rule on
+expiry day only: close it, because an ITM option held to expiry pays STT
+on its intrinsic value.
+
 ## Quotes
 
 - Yahoo's chart endpoint, `query2.finance.yahoo.com/v8/finance/chart/<SYMBOL>.NS`,
