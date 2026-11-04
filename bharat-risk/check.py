@@ -353,7 +353,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         opt = o.get("instrument") == "opt" or name is not None
         fno = fno or opt or bool(FUT_NAME.match(sym))
         fut = fno and not opt
-        unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or name)
+        fut_name = FUT_NAME.match(sym)
+        known = name is not None or bool(fut_name and fut_name.group(3) in india.MONTHS)
+        unknown_nfo = not known and (bool(FNO.match(sym)) or o.get("instrument") == "opt"
+                                     or (fno and not o.get("instrument")))
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
@@ -415,9 +418,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                            "far from its value); to close it: ticket.py flatten --symbol %s --limit PRICE" % sym)
 
         # asset
-        if unknown_nfo:   # fail closed: an F&O order this pack cannot classify skips no checks by default
-            reasons.append("asset: %s on NFO is not a contract name this pack knows (like NIFTY26OCTFUT or "
-                           "NIFTY26OCT23100CE), and the order has no instrument" % sym)
+        if unknown_nfo:   # fail closed: an F&O name this pack cannot read skips no checks, exits included
+            reasons.append("asset: %s is not an NFO contract name this pack can read (a future like NIFTY26OCTFUT, a "
+                           "monthly option like NIFTY26OCT23100CE, a weekly like NIFTY26O2023100CE): check the "
+                           "month code and the date" % sym)
         if sym and (fno or FNO.match(sym.replace(" ", ""))):
             if not c.get("allow_fno"):
                 reasons.append("asset: %s is an F&O contract; P1 trades cash stocks only "

@@ -250,6 +250,11 @@ FUT_NOW = "2026-10-21 09:36"
 
 
 class Futures(unittest.TestCase):
+    def test_a_futures_name_with_a_bad_month_blocks(self):
+        r = one([fut_order(symbol="NIFTY26XYZFUT")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue([x for x in r["reasons"] if x.startswith("asset:") and "NIFTY26XYZFUT" in x], r["reasons"])
+
     def test_the_example_passes_with_costs_and_margin(self):
         r = one([fut_order()], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual((r["verdict"], r["reasons"]), ("PASS", []), r)
@@ -485,6 +490,36 @@ class Options(unittest.TestCase):
                 "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
         r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
         self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
+
+    def asset_reason(self, r, sym):
+        return [x for x in r["reasons"] if x.startswith("asset:") and sym in x]
+
+    def test_a_bad_month_code_blocks(self):
+        sym = "NIFTY26XYZ23100CE"
+        r = one([opt_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+        o = opt_order(symbol=sym)
+        o.pop("instrument", None)
+        o.pop("exchange", None)
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+
+    def test_an_impossible_weekly_date_blocks_not_crashes(self):
+        sym = "NIFTY26N3123100CE"   # 31 Nov
+        r = one([opt_order(symbol=sym, expiry=None)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+
+    def test_a_bad_name_blocks_an_exit_too(self):
+        sym = "NIFTY26XYZ23100CE"
+        pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+        sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+        r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
 
     def exit_sell(self, **over):
         pf = {"cash": 200000, "positions": [{"ticker": EX.OPT_CONTRACT, "shares": 65, "lots": []}]}
