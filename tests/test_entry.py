@@ -251,6 +251,13 @@ class Calendar(unittest.TestCase):
         self.assertFalse(r["calendar_known"])
         self.assertIn("holiday list unknown for 2028", r["reason"])
 
+    def test_no_known_last_session_is_a_plain_error(self):
+        # Feb 2027: the 2027 holiday list is not in india.py yet, so no trading day is known in the last 30 days
+        code, out, err = run(["check", "NIFTY", "--instrument", "fut", "--offline", NSEI, "--now", "2027-02-15 10:00"])
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("holiday list for 2027", err)
+        self.assertIn("--bhavcopy FILE", err)
+
     def test_muhurat_session(self):
         d = shift_to(doc(), datetime.date(2026, 11, 8), datetime.time(14, 20))
         cfg = {"no_entries_before": "14:35", "no_entries_after": "15:15"}

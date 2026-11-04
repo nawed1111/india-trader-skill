@@ -103,6 +103,10 @@ def load_bhavcopy(path, day):
         except (OSError, ValueError, KeyError) as e:
             raise EntryError("cannot read the bhavcopy %s: %s" % (path, e))
     last = india.prev_trading_day(day)
+    if last is None:
+        raise EntryError("no known trading day in the 30 days before %s: NSE's holiday list for %d is not in india.py "
+                         "yet. Save the last session's F&O bhavcopy from nseindia.com and pass --bhavcopy FILE"
+                         % (day, day.year))
     try:
         return india.parse_bhavcopy(india.nse_get(BHAV_URL % last.strftime("%Y%m%d"), want_json=False, warm=False))
     except (india.NSEError, ValueError, KeyError) as e:
