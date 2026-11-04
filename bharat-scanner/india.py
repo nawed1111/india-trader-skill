@@ -9,8 +9,11 @@ tests/test_repo.py fails if a copy differs.
 Standard library only, Python 3.8+.
 """
 
+import csv
 import gzip
 import http.cookiejar
+import io
+import zipfile
 import time as _time
 import urllib.error
 import urllib.request
@@ -233,6 +236,90 @@ def band_ok(price, prev_close, band_pct):
     lo = tick_round(prev_close * (1 - band_pct / 100.0), mode="up")
     hi = tick_round(prev_close * (1 + band_pct / 100.0), mode="down")
     return lo <= price <= hi
+
+
+# ------------------------------------------------------------------ F&O contracts
+
+MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+BHAV_KIND = {"IDF": "fut", "STF": "fut", "IDO": "opt", "STO": "opt"}
+
+
+def parse_lot_sizes(text):
+    """fo_mktlots.csv -> {SYMBOL: {"2026-11": 65, ...}}. Blank cells are left out."""
+    rows = [[c.strip() for c in line.split(",")] for line in text.splitlines() if line.strip()]
+    head = rows[0]
+    cols = {}
+    for i, h in enumerate(head):
+        m = h[:3].upper()
+        if m in MONTHS and h[3:4] == "-":
+            cols[i] = "20%s-%02d" % (h[4:6], MONTHS.index(m) + 1)
+    out = {}
+    for r in rows[1:]:
+        if len(r) < 2 or not r[1] or r[1].upper() == "SYMBOL":
+            continue
+        out[r[1]] = {k: int(r[i]) for i, k in cols.items() if i < len(r) and r[i].isdigit()}
+    return out
+
+
+def lot_size(lots, symbol, expiry):
+    """The lot of the contract's own expiry month from parse_lot_sizes()."""
+    key = expiry.strftime("%Y-%m")
+    lot = lots.get(symbol, {}).get(key)
+    if not lot:
+        raise ValueError("no lot size for %s %s in fo_mktlots.csv" % (symbol, key))
+    return lot
+
+
+def _num(x):
+    return float(x) if x not in ("", None) else None
+
+
+def parse_bhavcopy(data):
+    """NSE F&O UDiFF bhavcopy (the .zip or the CSV inside it) -> futures and options rows."""
+    if data[:2] == b"PK":
+        z = zipfile.ZipFile(io.BytesIO(data))
+        data = z.read(z.namelist()[0])
+    out = []
+    for r in csv.DictReader(io.StringIO(data.decode("utf-8-sig"))):
+        kind = BHAV_KIND.get(r.get("FinInstrmTp", ""))
+        if not kind:
+            continue
+        out.append({"kind": kind, "symbol": r["TckrSymb"], "contract": r["FinInstrmNm"],
+                    "expiry": date.fromisoformat(r["XpryDt"]), "strike": _num(r["StrkPric"]),
+                    "right": r["OptnTp"] or None, "close": float(r["ClsPric"]), "settle": float(r["SttlmPric"]),
+                    "underlying": _num(r["UndrlygPric"]), "oi": int(float(r["OpnIntrst"] or 0)),
+                    "lot": int(r["NewBrdLotQty"]), "date": date.fromisoformat(r["TradDt"])})
+    return out
+
+
+def futures(rows, symbol):
+    """That symbol's futures, nearest expiry first."""
+    return sorted((r for r in rows if r["kind"] == "fut" and r["symbol"] == symbol), key=lambda r: r["expiry"])
+
+
+def _trading_days_between(a, b):
+    """Trading days after a, up to and including b."""
+    n, d = 0, a
+    while d < b:
+        d += timedelta(days=1)
+        n += trading_day(d)[0]
+    return n
+
+
+def front_future(rows, symbol, today, roll_days=0):
+    """The nearest future that does not expire today, nor within roll_days trading days."""
+    for f in futures(rows, symbol):
+        if f["expiry"] > today and _trading_days_between(today, f["expiry"]) > roll_days:
+            return f
+    return None
+
+
+def basis_ratio(fut_row):
+    return fut_row["close"] / fut_row["underlying"]
+
+
+def is_expiry_day(rows, symbol, d):
+    return any(f["expiry"] == d for f in futures(rows, symbol))
 
 
 # ------------------------------------------------------------------ fetch
