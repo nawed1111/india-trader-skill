@@ -115,11 +115,7 @@ def load_json(path):
 
 def load_state(path):
     """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
-    try:
-        return load_json(path) or {}, None
-    except ValueError as exc:
-        return {}, ("the state file %s could not be read (%s): starting fresh, so items you have seen may show "
-                    "again" % (path, exc))
+    return india.read_state(path, "items you have seen may show again")
 
 
 save_state = india.write_json   # whole or not at all: a write cut short leaves the old file

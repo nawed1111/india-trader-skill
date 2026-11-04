@@ -55,6 +55,22 @@ def write_atomic(path, fill):
         raise
 
 
+def read_state(path, lost="what you have seen may show again"):
+    """(state, note) for a tool's {"seen": {fingerprint: time}} state file: ({}, None) when there is none, and
+    a fresh {} with a note when it cannot be read or is not that shape, instead of stopping every run."""
+    if not path or not os.path.isfile(path):
+        return {}, None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            state = json.load(fh)
+        seen = state.get("seen", {}) if isinstance(state, dict) else None
+        if not isinstance(seen, dict) or not all(isinstance(v, str) for v in seen.values()):
+            raise ValueError('not the {"seen": {...}} this tool writes')
+    except ValueError as e:
+        return {}, "the state file %s could not be read (%s): starting fresh, so %s" % (path, e, lost)
+    return state, None
+
+
 def write_json(path, doc, indent=2):
     """write_atomic for a JSON document, with a newline at the end."""
     def fill(fh):
