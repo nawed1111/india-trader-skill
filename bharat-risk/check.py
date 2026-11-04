@@ -345,6 +345,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         seg = "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fut else 0
         lots = None
+        lot_missing = None
 
         # format
         if not sym:
@@ -358,8 +359,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         elif _f(qty) is not None and abs(_f(qty) - round(_f(qty))) > 1e-9:
             reasons.append("format: NSE orders take whole shares only, got qty %r" % qty)
         elif fut:
-            if lot <= 0:
-                reasons.append("format: a futures order needs its lot size (bharat-budget writes it)")
+            if lot <= 0:   # an entry only: getting out never waits on a lot size
+                lot_missing = "format: a futures entry needs its lot size (bharat-budget writes it)"
             elif int(round(_f(qty) or 0)) % lot:
                 reasons.append("format: %s trades in whole lots, a lot of %d units; qty %s is not" % (sym, lot, qty))
             else:
@@ -445,6 +446,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             exiting = q <= -held + 1e-9
         kind = "exit" if exiting else "entry"
         product = str(o.get("product") or "MIS").strip().upper()
+        if lot_missing:
+            later.append(lot_missing)
         if kind == "entry" and product != "MIS":
             later.append("product: %s is not intraday; P1 plans intraday (MIS) trades only" % product)
         if kind == "entry" and value is None and q:

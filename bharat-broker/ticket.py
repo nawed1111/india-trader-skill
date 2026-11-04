@@ -69,6 +69,12 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
              "cls": "at the close", "ioc": "immediate or cancel", "fok": "fill or kill"}
 YES_WORDS = ("yes", "y")
 SEGMENT = "eq_intraday"
+FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
+MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)
+
+
+def segment_of(symbol):
+    return "fut" if FUT_NAME.match(str(symbol or "").upper()) else SEGMENT
 KITE_TYPES = {"market": "MARKET", "limit": "LIMIT", "stop": "SL-M", "stop_limit": "SL"}
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
@@ -184,11 +190,14 @@ def kite_calls(order):
         entry["price"] = float(order["limit_price"])
     if typ in ("stop", "stop_limit") and order.get("stop_price") is not None:
         entry["trigger_price"] = float(order["stop_price"])
+    if entry["order_type"] in ("MARKET", "SL-M"):
+        entry["market_protection"] = MARKET_PROTECTION
     calls = [{"when": "now", "tool": "place_order", "input": entry}]
     if is_bracket(order) and order.get("stop_loss_stop_price") is not None:
         calls.append({"when": "after the entry fills", "tool": "place_order",
                       "input": dict(base, transaction_type="SELL" if side == "BUY" else "BUY", quantity=qty,
-                                    order_type="SL-M", trigger_price=float(order["stop_loss_stop_price"]))})
+                                    order_type="SL-M", trigger_price=float(order["stop_loss_stop_price"]),
+                                    market_protection=MARKET_PROTECTION)})
     return calls
 
 
@@ -444,7 +453,7 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
     if qty <= 0 or price <= 0:
         raise TicketError("a fill needs a positive qty and price")
     cost = round(qty * price, 2)
-    charges = india.leg_costs(SEGMENT, side, qty, price)["total"]
+    charges = india.leg_costs(segment_of(symbol), side, qty, price)["total"]
     pos = None
     for p in pf.setdefault("positions", []):
         if str(p.get("ticker", "")).upper() == symbol:
@@ -701,12 +710,17 @@ def cmd_flatten(a):
             raise TicketError("nothing to flatten: no %s shares in %s. Check the broker (get_positions) "
                               "and pass --qty if you do hold some" % (sym, a.portfolio))
     plan = read_json(a.plan, "plan", required=False) or {}
-    flat_by = (plan.get("flat_by") if str(plan.get("symbol", "")).upper() == sym else None) \
-        or cfg.get("flat_by") or "15:15"
-    order = {"symbol": sym, "exchange": "NSE", "product": "MIS", "side": "sell", "qty": _str_num(qty),
+    mine = sym in (str(plan.get("symbol", "")).upper(), str(plan.get("contract", "")).upper())
+    flat_by = (plan.get("flat_by") if mine else None) or cfg.get("flat_by") or "15:15"
+    fut = segment_of(sym) == "fut"
+    order = {"symbol": sym, "exchange": "NFO" if fut else "NSE", "product": "MIS", "side": "sell", "qty": _str_num(qty),
              "type": "market", "time_in_force": "day",
              "why": "flat by %s IST: closes the %s intraday trade before the broker's 15:20 square-off "
                     "(qty from %s)" % (flat_by, sym, source)}
+    if fut:
+        order["instrument"] = "fut"
+        if mine and plan.get("lot"):
+            order["lot"] = int(plan["lot"])
     old = read_json(a.orders, "orders", required=False)
     replaced = len(old.get("orders", [])) if isinstance(old, dict) else 0
     doc = {"created_by": "bharat-broker", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "status": "proposed",
