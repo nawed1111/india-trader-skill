@@ -104,9 +104,9 @@ FII/DII flows as a signal for one stock, and never invents a filing.
 - Paper trading by default (`"paper": true` in `trader/config.json`).
 - Nothing places an order except `/bharat-broker`, and only after
   `/bharat-risk` passes AND the user types an explicit yes for that order in
-  the chat, AND the brokerage tool is set to "Needs approval" in Claude
-  (Customize > Connectors > tool permissions) so Claude's own "Allow once /
-  Deny" card appears too. Never "Always allow" an order tool.
+  the chat, AND the brokerage tool is set to "Needs approval" (ask rules in
+  the trading folder's .claude/settings.json) so Claude's own "Allow once /
+  Deny" card appears too. Never add an allow rule for an order tool.
 - No F&O, margin (MTF), shorting or MIS leverage unless the config allows it
   and the user confirms.
 - Insider disclosures, bulk and block deals and FII/DII figures are PUBLIC

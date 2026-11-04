@@ -90,27 +90,31 @@ Going live is the user's own decision. Claude never sets `"paper": false`.
 3. **The server.** Zerodha's own server is github.com/zerodha/kite-mcp-server.
    Its hosted version (mcp.kite.trade) leaves out order tools on purpose, so
    live orders need the user's own copy running on their computer (at the
-   registered IP), set up per that project's README.
-   `claude_desktop_config.example.json` here shows the shape. **Keys never go
-   in the chat, and never in that example:** it is tracked by git, so a key
-   typed there ships with the next commit. The user copies the kite block
-   into Claude's own config file, outside any repo (macOS:
-   `~/Library/Application Support/Claude/claude_desktop_config.json`;
-   Windows: `%APPDATA%\Claude\claude_desktop_config.json`), and types the
-   key and secret there. On macOS or Linux, `tools/setup-trader.sh` in the
-   repo does the clone, the build and this config in one go
-   (`bash setup-trader.sh /Volumes/MySSD/trader`), with placeholder keys
-   and the order tools off (`EXCLUDED_TOOLS`) until the user removes them.
-   That registers kite with Claude Desktop only. Claude Code keeps its own
-   server list: once the keys are in, the user runs
-   `claude mcp add-from-claude-desktop` and picks kite (again after any
-   change of keys). Never ask for
-   them, never read that file back into the conversation, and if the user
-   pastes a key anyway, tell them to delete the message and regenerate it.
-4. **Tool permissions.** Customize > Connectors, open kite: `place_order`,
-   `modify_order`, `cancel_order` and any GTT tools: **Needs approval**, never
-   Always allow. Read-only tools (profile, margins, positions, orders,
-   quotes) can be Always allow.
+   registered IP). Run it as ONE shared copy in HTTP mode
+   (`APP_MODE=http` on `127.0.0.1:8080`) that every Claude session connects
+   to at `http://127.0.0.1:8080/mcp`. Never stdio: its stdio mode cannot log
+   in (it rejects the fixed `stdio` session ID), and one stdio copy per
+   session fight over port 8080, so the login lands in the wrong copy. On
+   macOS or Linux, `tools/setup-trader.sh` in the repo does it in one go
+   (`bash setup-trader.sh /Volumes/MySSD/trader`): the clone, the build, a
+   background service started at login (launchd or systemd), Claude Code's
+   connection, and placeholder keys with the order tools off
+   (`EXCLUDED_TOOLS`) until the user removes them. The Kite Connect app's
+   Redirect URL must be `http://127.0.0.1:8080/callback`. The keys live in
+   `~/.config/kite-mcp-server/env`, outside any repo and readable only by
+   the user, who types them there and restarts the server.
+   `kite-mcp-server.env.example` here shows the shape. **Keys never go in
+   the chat, and never in that example:** it is tracked by git, so a key
+   typed there ships with the next commit. Never ask for them, never read
+   that file back into the conversation, and if the user pastes a key
+   anyway, tell them to delete the message and regenerate it. Logging in:
+   the `login` tool gives a link and the user signs in on Zerodha's page
+   themselves, once a day per Claude session.
+4. **Tool permissions.** `place_order`, `modify_order`, `cancel_order` and
+   the GTT tools are **Needs approval**: the setup script writes ask rules
+   for them into the trading folder's `.claude/settings.json`, so Claude's
+   card asks for every call. Never add an allow rule for them. Read-only
+   tools (profile, margins, positions, orders, quotes) can be allowed.
 5. Set `"paper": false` and `"broker": "zerodha"` in `trader/config.json`
    only when the user says so, in their own words.
 
@@ -226,6 +230,6 @@ leaves Rs 1,10,318.75 of the Rs 2,00,000. Live, the same yes would be the
 - Nothing in this pack places an order except bharat-broker, and only when all three hold: bharat-risk
   passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
   user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+  (ask rules in the trading folder's .claude/settings.json). Never add an allow rule for an order tool.
 - No F&O, margin (MTF), short selling or MIS leverage unless the config allows it and the user confirms.
-- Broker keys live in environment variables or the Claude Desktop config, never in the chat.
+- Broker keys live in the Kite server's key file (~/.config/kite-mcp-server/env), never in the chat.
