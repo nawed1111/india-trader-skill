@@ -23,9 +23,17 @@ def frontmatter(path):
     return (m.group(1) if m else ""), text
 
 
+def ignored_dirs():
+    """The .gitignore folders (lines ending in /), plus .git: local only, never part of the pack."""
+    with open(os.path.join(ROOT, ".gitignore")) as fh:
+        lines = [x.strip() for x in fh]
+    return {x.rstrip("/") for x in lines if x.endswith("/") and not x.startswith("#")} | {".git"}
+
+
 def every_text_file():
+    skip = ignored_dirs()
     for base, dirs, files in os.walk(ROOT):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".superpowers")]
+        dirs[:] = [d for d in dirs if d not in skip]
         for f in files:
             if f.endswith((".md", ".py", ".json", ".csv", ".txt", ".xml")) or f == "LICENSE":
                 yield os.path.join(base, f)
@@ -38,10 +46,17 @@ class Repo(unittest.TestCase):
         self.assertEqual(found, sorted(SKILLS))
 
     def test_root_matches_the_reel(self):
-        root = set(d for d in os.listdir(ROOT) if d not in (".git", ".gitignore", ".superpowers"))
+        root = set(d for d in os.listdir(ROOT) if d not in ignored_dirs() | {".gitignore"})
         required = set([".claude-plugin", "LICENSE", "README.md", "tests"] + SKILLS)
         self.assertLessEqual(required, root)
-        self.assertLessEqual(root - required, {"docs", "tools", "india"})
+        self.assertLessEqual(root - required, {"tools", "india"})
+
+    def test_local_only_files_stay_out_of_git(self):
+        self.assertLessEqual({"docs", "trader", ".superpowers"}, ignored_dirs())
+        with open(os.path.join(ROOT, ".gitignore")) as fh:
+            text = fh.read()
+        for line in ("*.pyc", ".claude/settings.local.json"):
+            self.assertIn(line, text.splitlines())
 
     def test_india_copies_identical(self):
         with open(os.path.join(ROOT, "india", "india.py"), "rb") as fh:
