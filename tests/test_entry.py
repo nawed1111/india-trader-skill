@@ -712,6 +712,17 @@ class Options(unittest.TestCase):
         self.assertEqual(res["trigger"]["bar_index"], first["slot"])
         self.assertEqual(e["option"]["right"], "PE")
 
+    def test_watch_lines_for_a_put_say_below(self):
+        # NIFTY Oct 19: range low 22970.85; the 12:00 bar closed under it at 22954.25
+        ch = entry.get_chart("NIFTY", "5m", datetime.date(2026, 10, 19), NSEI, datetime.date(2026, 10, 19))
+        res = entry.evaluate(ch, entry.parse_now("2026-10-19 12:05"), below=True)
+        bar = {b["et"].strftime("%H:%M"): b for b in res["_bars"]}
+        self.assertEqual(entry.bar_line(bar["09:30"], res),
+                         " 9:30 bar  closed Rs 23096.90  Rs 126.05 over Rs 22970.85")     # not yet: still above
+        self.assertEqual(entry.bar_line(bar["12:00"], res),
+                         "12:00 bar  closed Rs 22954.25  TRIGGERED: closed below Rs 22970.85 (-0.07%). Get in now "
+                         "if you take it: 12:05 PM, Rs 22954.25")
+
     def test_an_illiquid_strike_warns(self):
         with open("cfg.json", "w") as fh:
             json.dump({"min_option_oi": 10 ** 9}, fh)
