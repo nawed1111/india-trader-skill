@@ -22,5 +22,10 @@
   "allow_margin": false,
   "allow_short": false,
   "margin_per_lot_inr": {},
-  "max_lots": 1
+  "max_lots": 1,
+  "max_premium_inr": null,
+  "min_option_oi": 50000,
+  "expiry_day_cutoff": "13:00",
+  "risk_free_rate": 0.06,
+  "stop_limit_ticks": 10
 }

@@ -69,3 +69,7 @@ OPT_STOP = 123.35                    # the premium at the index stop 23034.05, t
 OPT_TARGET = 209.55                  # the premium at the index target, tick up
 OPT_RISK_PER_UNIT = 39.60
 OPT_RISK_PER_LOT = 2574.00           # 39.60 x 65
+OPT_LOTS = 1
+OPT_PREMIUM_PAID = 10591.75          # 65 x 162.95, paid in full
+OPT_COSTS_AT_STOP = 67.02             # Zerodha options, 65 x 162.95 to 123.35
+OPT_MAX_LOSS = 2641.02               # 65 x 39.60 + 67.02

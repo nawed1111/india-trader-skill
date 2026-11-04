@@ -71,7 +71,7 @@ YES_WORDS = ("yes", "y")
 SEGMENT = "eq_intraday"
 FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
 FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
-              "fut_price_source")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
+              "fut_price_source", "right", "strike", "premium_source", "oi", "illiquid", "iv")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
 MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)
 
 
