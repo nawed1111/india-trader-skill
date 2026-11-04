@@ -140,15 +140,7 @@ def read_json(path, what, required=True):
         raise TicketError("%s is not valid JSON: %s" % (path, e))
 
 
-def write_json(path, data):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+write_json = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def rec_day(rec):

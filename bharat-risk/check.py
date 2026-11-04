@@ -937,11 +937,7 @@ def main(argv=None):
             rec["checked_at"] = datetime.datetime.now(datetime.timezone.utc).replace(
                 microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%SZ")
             rec["orders_file"] = a.orders
-            tmp = a.out + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(rec, fh, indent=2)
-                fh.write("\n")
-            os.replace(tmp, a.out)
+            india.write_json(a.out, rec)
     except RiskError as e:
         print("check.py: %s" % e, file=sys.stderr)
         return 1

@@ -1,6 +1,6 @@
 """India rules shared by every bharat-* skill: the NSE clock and calendar,
-symbols, Zerodha trading costs, tick rounding, price bands and a polite
-NSE fetcher.
+symbols, Zerodha trading costs, tick rounding, price bands, a polite
+NSE fetcher, and writing a file whole or not at all.
 
 This file is copied into every skill folder so each skill installs on its
 own. Edit india/india.py at the repo root, then run tools/sync_india.py;
@@ -13,14 +13,55 @@ import csv
 import gzip
 import http.cookiejar
 import io
+import json
 import math
+import os
 import re
+import stat
+import tempfile
 import zipfile
 import time as _time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+
+# ------------------------------------------------------------------ files
+
+def write_atomic(path, fill):
+    """Write a file whole or not at all: fill(fh) writes a temp file of its own next to it, which is then
+    swapped in. A write cut short (a crash, Ctrl-C, a full disk) leaves the old file and no temp file, and
+    two runs writing the same file at once never share one. The file keeps its mode."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:   # a new file: the usual mode for this umask, not the temp file's private 0600
+        mask = os.umask(0)
+        os.umask(mask)
+        mode = 0o666 & ~mask
+    fd, tmp = tempfile.mkstemp(dir=d or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fill(fh)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_json(path, doc, indent=2):
+    """write_atomic for a JSON document, with a newline at the end."""
+    def fill(fh):
+        json.dump(doc, fh, indent=indent)
+        fh.write("\n")
+    write_atomic(path, fill)
+
 
 # ------------------------------------------------------------------ clock
 
