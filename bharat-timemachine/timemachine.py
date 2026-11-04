@@ -328,8 +328,11 @@ def pct(a, q):
     return a[min(len(a) - 1, int(q * len(a)))]
 
 
-def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=2, side="buy"):
-    """Monte Carlo replays of bars k+1..last. Same draws and order as the US pack's sim.py."""
+def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=2, side="buy", levels=None,
+             value=None):
+    """Monte Carlo replays of bars k+1..last. Same draws and order as the US pack's sim.py.
+    levels {bar: (stop, target)} replaces the fixed stop and target bar by bar (an option's premium levels
+    as index levels); value (fn, entry, stop, target) measures R and green on fn(close) instead of the close."""
     long = side == "buy"
     risk = (entry - stop) if long else (stop - entry)
     r_target = round(((target - entry) if long else (entry - target)) / risk, 4)
@@ -348,6 +351,8 @@ def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=
         for i in range(k + 1, last + 1):
             o, h, l, c = choice(pool[slot(rng, i)])
             hi, lo, cl = p * h, p * l, p * c
+            if levels:
+                stop, target = levels[i]
             if outcome is None:
                 if long:
                     if lo <= stop:
@@ -367,10 +372,18 @@ def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=
         if keep:
             paths.append(path)
     cnt = {x: outcomes.count(x) for x in ("target", "stop", "close")}
-    green = sum(1 for o, p in zip(outcomes, closes)
-                if o == "target" or (o == "close" and (p > entry if long else p < entry)))
-    Rs = [r_target if o == "target" else -1.0 if o == "stop" else ((p - entry) if long else (entry - p)) / risk
-          for o, p in zip(outcomes, closes)]
+    if value:
+        fn, ve, vs, vt = value
+        r_target = round((vt - ve) / (ve - vs), 4)
+        vals = [fn(p) for p in closes]
+        green = sum(1 for o, v in zip(outcomes, vals) if o == "target" or (o == "close" and v > ve))
+        Rs = [r_target if o == "target" else -1.0 if o == "stop" else (v - ve) / (ve - vs)
+              for o, v in zip(outcomes, vals)]
+    else:
+        green = sum(1 for o, p in zip(outcomes, closes)
+                    if o == "target" or (o == "close" and (p > entry if long else p < entry)))
+        Rs = [r_target if o == "target" else -1.0 if o == "stop" else ((p - entry) if long else (entry - p)) / risk
+              for o, p in zip(outcomes, closes)]
     srt = sorted(closes)
     # percentile bands per bar for the fan chart: a second run of 2,000 paths, same seed
     rng = random.Random(seed)
@@ -406,6 +419,50 @@ def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=
     }
 
 
+# ---------------------------------------------------------------- index options
+
+def bar_years(day, bar, expiry):
+    """Years to expiry at the close of bar `bar` (0 = the 9:15 bar) on day."""
+    m = OPEN_MIN + 5 * (bar + 1)
+    at = datetime.datetime.combine(day, datetime.time(m // 60, m % 60), india.IST)
+    return india.years_to_expiry(at, expiry)
+
+
+def premium(opt, index, years):
+    return india.option_price(opt["right"], index, opt["forward_ratio"], opt["strike"], years, opt["iv"], opt["rate"])
+
+
+def index_at(opt, prem, years, around):
+    """The index level where the premium is prem at that time (the premium rises with the index for a call,
+    falls for a put). +-inf when no index from half to one and a half times `around` gives it."""
+    call = opt["right"] == "CE"
+    lo, hi = 0.5 * around, 1.5 * around
+    f_lo, f_hi = premium(opt, lo, years), premium(opt, hi, years)
+    small, big = (f_lo, f_hi) if call else (f_hi, f_lo)
+    if prem <= small:
+        return lo if call else hi            # every index in range is at or above prem
+    if prem >= big:
+        return float("inf") if call else float("-inf")
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if (premium(opt, mid, years) < prem) == call:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def option_levels(opt, day, k, last, around):
+    """{bar: (index stop, index target)}: where the premium stop and target sit on the index, bar by bar.
+    For a call the stop is hit at or under its level; for a put at or over it."""
+    expiry = datetime.date.fromisoformat(opt["expiry"])
+    out = {}
+    for i in range(k + 1, last + 1):
+        y = bar_years(day, i, expiry)
+        out[i] = (index_at(opt, opt["stop"], y, around), index_at(opt, opt["target"], y, around))
+    return out
+
+
 # ---------------------------------------------------------------- stop rules and the history replay
 
 def tick_away(x, long):
@@ -436,7 +493,7 @@ def rule_stop(rule, oh, ol, entry, long):
     return tick_away(entry * (1 - frac) if long else entry * (1 + frac), long)
 
 
-def history_replay(sessions, rule, last, side="buy"):
+def history_replay(sessions, rule, last, side="buy", opt=None, years_at_entry=None):
     """The plan's rule on every past full session: entry = the first bar after the
     opening range to close beyond it (up to the --until bar), then stop first, then
     target, bar by bar, else the close at --until."""
@@ -454,6 +511,9 @@ def history_replay(sessions, rule, last, side="buy"):
         if risk <= 0:
             continue
         t = tick_toward_target(e + rule["target_r"] * risk if long else e - rule["target_r"] * risk, long)
+        if opt:
+            trades.append(_opt_trade(d, D, kk, last, e, s, t, opt, years_at_entry))
+            continue
         oc = None
         for b in D[kk + 1:last + 1]:
             if (b["l"] <= s) if long else (b["h"] >= s):
@@ -467,7 +527,7 @@ def history_replay(sessions, rule, last, side="buy"):
             ((cl - e) if long else (e - cl)) / risk
         trades.append({"date": d, "time": clock12(OPEN_MIN + 5 * (kk + 1)), "entry": e, "stop": s, "target": t,
                        "outcome": oc or "close", "R": round(R, 2)})
-    return {
+    out = {
         "sessions": len(sessions), "triggered": len(trades),
         "target": sum(1 for x in trades if x["outcome"] == "target"),
         "stop": sum(1 for x in trades if x["outcome"] == "stop"),
@@ -476,6 +536,34 @@ def history_replay(sessions, rule, last, side="buy"):
         "avg_R": round(statistics.mean(x["R"] for x in trades), 3) if trades else None,
         "rule": rule, "trades": trades,
     }
+    if opt:
+        out["note"] = ("each session's option has the plan's strike distance and time to expiry at its entry, and the "
+                       "plan's implied volatility (past sessions' IVs are not known)")
+    return out
+
+
+def _opt_trade(d, D, kk, last, e, s, t, opt, years_at_entry):
+    """One past session's trade on the option: the plan's moneyness and time left, the plan's IV, premiums
+    for the index entry, stop and target; then stop first, then target, on the premium bar by bar."""
+    o = dict(opt, strike=e * opt["strike"] / opt["index_entry"])
+    pe, ps, pt = premium(o, e, years_at_entry), premium(o, s, years_at_entry), premium(o, t, years_at_entry)
+    call = o["right"] == "CE"
+    oc, prem = None, pe
+    for j, b in enumerate(D[kk + 1:last + 1], 1):
+        y = max(years_at_entry - 5 * j / (365 * 1440.0), 0.0)
+        worst, best = (b["l"], b["h"]) if call else (b["h"], b["l"])
+        if premium(o, worst, y) <= ps:
+            oc = "stop"
+            break
+        if premium(o, best, y) >= pt:
+            oc = "target"
+            break
+        prem = premium(o, b["c"], y)
+    risk = pe - ps
+    R = (pt - pe) / risk if oc == "target" else -1.0 if oc == "stop" else (prem - pe) / risk
+    return {"date": d, "time": clock12(OPEN_MIN + 5 * (kk + 1)), "entry": e, "stop": s, "target": t,
+            "premium_entry": round(pe, 2), "premium_stop": round(ps, 2), "premium_target": round(pt, 2),
+            "outcome": oc or "close", "R": round(R, 2)}
 
 
 # ---------------------------------------------------------------- the plan
@@ -551,6 +639,20 @@ def normalize_plan(raw, src="flags"):
             entry, stop, target = (_num(ix[k], "index." + k) for k in ("entry", "stop", "target"))
         else:
             entry, stop, target = entry / ratio, stop / ratio, target / ratio
+    opt = None
+    if raw.get("instrument") == "opt":
+        # an option plan replays the index; its premium levels are decided by repricing at each bar
+        need = ("index_entry", "index_stop", "index_target", "strike", "right", "iv", "forward_ratio", "expiry", "lot")
+        missing = [x for x in need if raw.get(x) is None]
+        if missing:
+            raise TMError("the option plan is missing %s: make it with bharat-exit" % ", ".join(missing))
+        opt = {"contract": raw.get("contract"), "lot": raw.get("lot"), "expiry": raw.get("expiry"),
+               "strike": float(raw["strike"]), "right": raw["right"], "iv": float(raw["iv"]),
+               "forward_ratio": float(raw["forward_ratio"]), "rate": float(raw.get("rate") or 0.06),
+               "entry": entry, "stop": stop, "target": target, "risk_per_unit": round(entry - stop, 2),
+               "index_entry": float(raw["index_entry"])}
+        entry, stop, target = (_num(raw[x], x) for x in ("index_entry", "index_stop", "index_target"))
+        side = "sell" if raw.get("index_side") == "down" else "buy"   # the index direction that pays the option
     long = side == "buy"
     if long and not stop < entry < target:
         raise TMError("a buy needs stop < entry < target (got stop %s, entry %s, target %s)" % (stop, entry, target))
@@ -593,7 +695,7 @@ def normalize_plan(raw, src="flags"):
         "target_r": round(((target - entry) if long else (entry - target)) / risk, 2),
         "opening_range": dict(orng, minutes=or_min) if isinstance(orng, dict) else {"minutes": or_min},
         "stop_rule": str(raw.get("stop_rule") or "auto"), "interval": "5m",
-        "flat_by": raw.get("flat_by"), "from": src, "fut": fut,
+        "flat_by": raw.get("flat_by"), "from": src, "fut": fut, "opt": opt,
     }
 
 
@@ -719,7 +821,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
                       % (clock24(OPEN_MIN + 5 * k), plan["entry_time"], plan["date"], sym, reason))
     eb = entry_day[k]
     warn = []
-    if not eb["l"] - 0.01 <= plan["entry"] <= eb["h"] + 0.01:
+    if not eb["l"] - 0.01 <= plan["entry"] <= eb["h"] + 0.01 and not plan.get("opt"):
         warn.append("the plan's entry %.2f is outside that bar's range %.2f to %.2f"
                     % (plan["entry"], eb["l"], eb["h"]))
     sessions, short = full_sessions(days, plan["date"], last + 1)
@@ -729,7 +831,16 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
                                          " (Yahoo's NSE data has no 15:20 bar: use --until 15:15 or earlier)"
                                          if until_min > FLAT_MIN else ""))
     pool = build_pool(sessions)
-    mc = simulate(pool, plan["entry"], plan["stop"], plan["target"], k, last, replays, seed, window, plan["side"])
+    opt = plan.get("opt")
+    levels = value = None
+    if opt:
+        pday = datetime.date.fromisoformat(plan["date"])
+        expiry = datetime.date.fromisoformat(opt["expiry"])
+        y_last = bar_years(pday, last, expiry)
+        levels = option_levels(opt, pday, k, last, plan["entry"])
+        value = (lambda c: premium(opt, c, y_last), opt["entry"], opt["stop"], opt["target"])
+    mc = simulate(pool, plan["entry"], plan["stop"], plan["target"], k, last, replays, seed, window, plan["side"],
+                  levels, value)
     mc = dict(mc, until=clock24(until_min), pool_sessions=len(sessions), pool_from=sessions[0][0],
               pool_to=sessions[-1][0],
               band_times=[clock24(OPEN_MIN + 5 * (j + 1)) for j in range(k, last + 1)])
@@ -737,7 +848,9 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     plan_out = {kk: v for kk, v in plan.items() if v is not None}
     if rule:
         plan_out["stop_rule"] = rule["stop_rule"]
-        history = history_replay(sessions, rule, last, plan["side"])
+        history = history_replay(sessions, rule, last, plan["side"], opt,
+                                 bar_years(datetime.date.fromisoformat(plan["date"]), k,
+                                           datetime.date.fromisoformat(opt["expiry"])) if opt else None)
     else:
         history = {"sessions": len(sessions), "triggered": 0, "rule": None, "trades": [],
                    "note": "skipped: the history replay knows the opening-range breakout (orb) only, "
@@ -747,8 +860,15 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if plan.get("fut"):
         r = plan["fut"]["basis_ratio"]
         fut = dict(plan["fut"], **{k: round(mc[k] * r, 2) for k in ("median_close", "p5_close", "p95_close")})
+    opt_out = None
+    if opt:
+        ps = sorted(value[0](mc[x]) for x in ("p5_close", "median_close", "p95_close"))
+        opt_out = dict(opt, p5_premium=round(ps[0], 2), median_premium=round(ps[1], 2), p95_premium=round(ps[2], 2),
+                       years_at_entry=bar_years(datetime.date.fromisoformat(plan["date"]), k,
+                                                datetime.date.fromisoformat(opt["expiry"])))
     return {
         "fut": fut,
+        "opt": opt_out,
         "created_by": "bharat-timemachine",
         "created_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source,
@@ -796,8 +916,9 @@ def report(doc):
         "",
         "  Price at %s: median %.2f, 90 %% of replays between %.2f and %.2f."
         % (until, m["median_close"], m["p5_close"], m["p95_close"]),
-        "  Average R: %+.3f (R = the %.2f risk: %sR at the target, -1R at the stop)."
-        % (m["avg_R"], p["risk_per_share"], ("+%g" % m["r_at_target"]), ),
+        "  Average R: %+.3f (R = the %.2f %srisk: %sR at the target, -1R at the stop)."
+        % (m["avg_R"], doc["opt"]["risk_per_unit"] if doc.get("opt") else p["risk_per_share"],
+           "premium " if doc.get("opt") else "", ("+%g" % m["r_at_target"]), ),
         "",
     ]
     if h.get("rule"):
@@ -822,6 +943,17 @@ def report(doc):
                   % (f["contract"], f["lot"], f["basis_ratio"], f["basis_date"],
                      " (ESTIMATED: an old basis)" if f["basis_estimated"] else "", f["entry"], f["stop"], f["target"],
                      f["risk_per_unit"], until, f["median_close"], f["p5_close"], f["p95_close"])]
+    o = doc.get("opt")
+    if o:
+        lines += ["", "Option %s (lot %s): the premium is Black-76 on the forward (index x %.6f) with implied volatility "
+                  "%.2f %%, held constant for the whole replay (real IV moves, most of all near expiry). The stop and "
+                  "target are on the premium: entry %.2f, stop %.2f, target %.2f (risk %.2f a unit); each bar reprices "
+                  "it with the time left. Premium at %s: median %.2f, 90 %% between %.2f and %.2f. The odds and R "
+                  "above are the premium's; the prices are the index's."
+                  % (o["contract"], o["lot"], o["forward_ratio"], 100 * o["iv"], o["entry"], o["stop"], o["target"],
+                     o["risk_per_unit"], until, o["median_premium"], o["p5_premium"], o["p95_premium"])]
+        if h.get("note"):
+            lines.append("History: " + h["note"] + ".")
     lines += ["", doc["verdict"]] + list(doc.get("verdict_notes") or []) + [""]
     for w in doc.get("warnings") or []:
         lines.append("Note: " + w + ".")

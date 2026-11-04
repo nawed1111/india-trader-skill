@@ -258,3 +258,46 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+OPT_PLAN = {"symbol": "NIFTY", "date": "2026-10-21", "instrument": "opt", "contract": "NIFTY26OCT23100CE",
+            "expiry": "2026-10-27", "right": "CE", "index_side": "up", "entry": 162.95, "stop": 123.35,
+            "target": 209.55, "index_entry": 23115.65, "index_stop": 23034.05, "index_target": 23197.25,
+            "flat_by": "15:15"}
+
+
+class Options(unittest.TestCase):
+    def ev(self, rules, quotes, now, state=None):
+        return al.evaluate(rules, quotes, status(now), state or {}, al.parse_now(now))
+
+    def test_from_plan_watches_the_index_levels_and_says_so(self):
+        rules = {r["id"]: r for r in al.rules_from_plan(OPT_PLAN)}
+        s, t = rules["nifty-plan-stop"], rules["nifty-plan-target"]
+        self.assertEqual((s["price"], t["price"]), (23034.05, 23197.25))
+        for r in (s, t):
+            self.assertIn("NIFTY26OCT23100CE", r["note"])
+            self.assertIn("index level from the model", r["note"])
+        self.assertIn("premium 123.35", s["note"])
+        rings, _ = self.ev([s], {"NIFTY": {"price": 23030.0}}, "2026-10-21 10:30")
+        self.assertIn("index level from the model", rings[0]["message"])
+        self.assertEqual(rules["nifty26oct23100ce-expiry-close"]["at"], "15:00")
+
+    def test_a_put_stop_rings_when_the_index_rises(self):
+        plan = dict(OPT_PLAN, contract="NIFTY26OCT23000PE", right="PE", index_side="down", index_entry=22954.25,
+                    index_stop=23073.00, index_target=22835.50)
+        rules = {r["id"]: r for r in al.rules_from_plan(plan)}
+        rings, _ = self.ev([rules["nifty-plan-stop"]], {"NIFTY": {"price": 23080.0}}, "2026-10-21 12:30")
+        self.assertEqual(len(rings), 1)
+        self.assertIn("at or above your stop", rings[0]["message"])
+        rings, _ = self.ev([rules["nifty-plan-stop"]], {"NIFTY": {"price": 22900.0}}, "2026-10-21 12:30")
+        self.assertEqual(rings, [])
+        rings, _ = self.ev([rules["nifty-plan-target"]], {"NIFTY": {"price": 22830.0}}, "2026-10-21 12:30")
+        self.assertIn("at or below your target", rings[0]["message"])
+
+    def test_the_15_00_expiry_alert_rings_on_expiry_day_only(self):
+        r = {x["id"]: x for x in al.rules_from_plan(OPT_PLAN)}["nifty26oct23100ce-expiry-close"]
+        rings, _ = self.ev([r], {}, "2026-10-27 15:00")
+        self.assertEqual(len(rings), 1)
+        self.assertIn("STT on its intrinsic value", rings[0]["message"])
+        self.assertEqual(self.ev([r], {}, "2026-10-27 14:59")[0], [])
+        self.assertEqual(self.ev([r], {}, "2026-10-26 15:00")[0], [])   # the day before: the 09:15 rule says it

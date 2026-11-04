@@ -182,6 +182,63 @@ F&O). SEBI's study found that about 9 in 10 individual F&O traders lost
 money. F&O profits are taxed as non-speculative business income. Not
 financial or tax advice.
 
+## Index options
+
+NIFTY and BANKNIFTY options, intraday, buying only: this pack buys calls and
+puts and never writes (sells to open) an option, whatever the config says.
+Off until you set `"allow_fno": true`. There are no free intraday option
+prices, so the signal is read on the index and the option is priced with a
+model: Black-76 on the forward (the index times the put-call parity ratio
+from the last F&O bhavcopy, same expiry), with an implied volatility backed
+out of a premium (the one you read off Kite, or the last bhavcopy close) and
+held constant.
+
+The same session as the futures example: NIFTY, 2026-10-21.
+
+1. **`/bharat-entry`** `check NIFTY --instrument opt --right CE`: the index
+   triggers at 9:35 AM at 23,115.65. The contract is the ATM call
+   NIFTY26OCT23100CE (strike 23100, expires 2026-10-27, lot 65; the 19
+   October weekly expired on its day). Its 2026-10-19 bhavcopy close was
+   87.25, open interest 49,34,930 units; that premium gives an implied
+   volatility of 12.5 %, and at the trigger the model prices the call at
+   about 162.95. That is an estimate: read the live premium and pass
+   `--premium` (a put, `--right PE`, triggers on a close below the range
+   low instead).
+2. **`/bharat-exit`** turns the index plan into premiums: the index stop
+   23,034.05 (the range midpoint) and the 1R index target 23,197.25 become a
+   premium stop of 123.35 and a premium target of 209.55, at the entry time
+   with the same implied volatility. Risk 39.60 a unit, Rs 2,574 a lot.
+3. **`/bharat-timemachine`** replays the index 10,000 times and reprices the
+   call at every bar with the time left to expiry. On the premium: target
+   first 33.1 %, stop first 48.4 % (seed 19); the time decay tilts a bought
+   option toward its stop, more than the index plan's 34.5 % vs 46.4 %. The
+   premium at 15:15: median 149.99.
+4. **`/bharat-budget`** sizes by premium, paid in full from the cash: 1 lot,
+   65 units, Rs 10,591.75 of premium. Option charges at the stop are
+   Rs 67.02 (brokerage Rs 40 flat, STT 0.15 % of the sell premium), so the
+   loss at the stop is 65 x 39.60 + 67.02 = Rs 2,641.02. The order is always
+   a limit buy at the premium on NFO, MIS.
+5. **`/bharat-risk`** blocks any opening sell ("option selling is not part of
+   this pack"), a market order, an estimated premium (options move too fast
+   for an end-of-day price), open interest under `min_option_oi`, a new
+   entry on expiry day after `expiry_day_cutoff` (13:00), and costs that eat
+   the reward: a Rs 3 option bought for 1 lot pays Rs 40 of brokerage on a
+   Rs 195 position.
+6. **`/bharat-broker`** sends a LIMIT buy, then an SL stop-limit (NSE takes no
+   SL-M on options) 10 ticks under the trigger; a stop-limit may not fill in
+   a fast move. Flattening an option is always a limit sell.
+7. **`/bharat-alerts`** watches the index levels the model ties to the
+   premium stop and target, and says so in every message, and rings at
+   15:00 on expiry day: an ITM option held to expiry pays
+   STT on its intrinsic value, so close it.
+
+**Options fine print.** A bought option can lose 100 % of its premium in
+hours, and near expiry it can do that in minutes. The model is a model: one
+implied volatility held constant for the whole day, no skew, no jumps, and
+real premiums move with volatility as well as the index. SEBI's F&O studies
+found that about 9 in 10 individual F&O traders lost money. Option profits
+are taxed as non-speculative business income. Not financial or tax advice.
+
 ## The tools
 
 All standard-library Python. The data tools read public endpoints and are
@@ -202,6 +259,7 @@ python3 bharat-broker/ticket.py show                                   # the tic
 python3 bharat-alerts/alerts.py add --from-plan                        # stop, target, flat by 15:15
 python3 bharat-alerts/alerts.py check                                  # rings what hit, once
 python3 bharat-entry/entry.py check NIFTY --instrument fut             # index signal, futures price from the bhavcopy
+python3 bharat-entry/entry.py check NIFTY --instrument opt --right CE  # index signal, the ATM call and its premium
 python3 bharat-analyst/results.py RELIANCE                             # quarters, margins, growth
 python3 bharat-insider/insider.py new                                  # insider trades, deals, FII/DII
 ```

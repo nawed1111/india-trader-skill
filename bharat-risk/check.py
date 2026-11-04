@@ -81,7 +81,8 @@ DEFAULTS = {
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "max_cost_share": 0.25, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False, "allow_short": False,
-    "margin_per_lot_inr": {}, "max_lots": 1,
+    "margin_per_lot_inr": {}, "max_lots": 1, "max_premium_inr": None, "min_option_oi": 50000,
+    "expiry_day_cutoff": "13:00",
 }
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 FUT_NAME = re.compile(r"^([A-Z&\-]+)(\d{2})([A-Z]{3})FUT$")
@@ -93,11 +94,15 @@ PRICE_FIELDS = ("qty", "notional", "limit_price", "stop_price", "take_profit_lim
                 "stop_loss_stop_price", "stop_loss_limit_price")
 TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
 TIFS = {"day", "gtc", "opg", "cls", "ioc", "fok"}
+OPT_SYM = re.compile(r"^[A-Z&\-]+\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
 FNO = re.compile(r"^[A-Z&\-]+\d{2}([A-Z]{3}FUT|[A-Z0-9]{3}\d+(CE|PE))$")
 SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,19}$")
 NEAR_BAND = 0.01
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 CENT = 0.005
+# futures fields that change the verdict: editing one after a PASS must change the fingerprint
+FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
+              "fut_price_source", "right", "strike", "premium_source", "oi", "illiquid", "iv")
 FRESH_MINUTES = 15
 REF_WORDS = {"plan": "the plan's entry", "price": "the latest price", "limit": "the limit price",
              "stop price": "the stop price", "stale price": "an old price"}
@@ -187,7 +192,7 @@ def read_json(path, what, required=True):
 
 def fingerprint(order):
     """Same function in bharat-broker/ticket.py: the exact order that was checked."""
-    core = {k: order[k] for k in ORDER_FIELDS if k in order and order[k] is not None}
+    core = {k: order[k] for k in ORDER_FIELDS + FUT_FIELDS if k in order and order[k] is not None}
     blob = json.dumps(core, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -313,6 +318,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
     seen = set()
     results = []
     batch_entries, batch_loss = 0, 0.0
+    batch_margin = {}                    # futures margin blocked by buys earlier in this batch
     if not c.get("paper", True):
         top_warn.append("LIVE account (\"paper\": false): these orders use real money")
     top_warn.extend(win_warns)
@@ -341,9 +347,13 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         legs = o.get("take_profit_limit_price") is not None or o.get("stop_loss_stop_price") is not None
         bracket = oc == "bracket" or (not oc and legs)
         value = None
-        fut = o.get("instrument") == "fut" or str(o.get("exchange") or "").upper() == "NFO"
-        seg = "fut" if fut else "eq_intraday"
-        lot = int(_f(o.get("lot")) or 0) if fut else 0
+        fno = o.get("instrument") in ("fut", "opt") or str(o.get("exchange") or "").upper() == "NFO"
+        opt = o.get("instrument") == "opt" or bool(OPT_SYM.match(sym))
+        fno = fno or opt
+        fut = fno and not opt
+        unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or OPT_SYM.match(sym))
+        seg = "opt" if opt else "fut" if fut else "eq_intraday"
+        lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
         lot_missing = None
 
@@ -358,9 +368,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             reasons.append("format: no qty")
         elif _f(qty) is not None and abs(_f(qty) - round(_f(qty))) > 1e-9:
             reasons.append("format: NSE orders take whole shares only, got qty %r" % qty)
-        elif fut:
+        elif fno:
             if lot <= 0:   # an entry only: getting out never waits on a lot size
-                lot_missing = "format: a futures entry needs its lot size (bharat-budget writes it)"
+                lot_missing = "format: an F&O entry needs its lot size (bharat-budget writes it)"
             elif int(round(_f(qty) or 0)) % lot:
                 reasons.append("format: %s trades in whole lots, a lot of %d units; qty %s is not" % (sym, lot, qty))
             else:
@@ -396,7 +406,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                          % (oc or "advanced_instructions"))
 
         # asset
-        if sym and FNO.match(sym.replace(" ", "")):
+        if unknown_nfo:   # fail closed: an F&O order this pack cannot classify skips no checks by default
+            reasons.append("asset: %s on NFO is not a contract name this pack knows (like NIFTY26OCTFUT or "
+                           "NIFTY26OCT23100CE), and the order has no instrument" % sym)
+        if sym and (fno or FNO.match(sym.replace(" ", ""))):
             if not c.get("allow_fno"):
                 reasons.append("asset: %s is an F&O contract; P1 trades cash stocks only "
                                "(\"allow_fno\": false)" % sym)
@@ -461,6 +474,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             cap_n = _f(c.get("max_fut_notional_inr"))
             if cap_n and value > cap_n + CENT:
                 later.append("size: %s notional is over your %s max_fut_notional_inr" % (money(value), money(cap_n)))
+        elif value is not None and opt:
+            cap_p = _f(c.get("max_premium_inr"))
+            if cap_p and value > cap_p + CENT:
+                later.append("size: %s of premium is over your %s max_premium_inr" % (money(value), money(cap_p)))
         elif value is not None:
             if value < float(c.get("min_order_inr") or 0) - CENT:
                 later.append("size: %s is under your %s minimum order"
@@ -474,6 +491,47 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         total = cash + sum(acct["values"].values())
         buffer_inr = total * float(c.get("cash_buffer_pct") or 0) / 100.0
         need_margin = None
+        if opt and kind == "entry":
+            if side == "sell":
+                reasons.append("short: option selling is not part of this pack (a written option's loss has no cap); "
+                               "it only buys calls and puts. If you hold this option, record the fill first")
+            if typ != "limit":
+                later.append("entry: an option entry is a limit order at the premium; a market order on an option "
+                             "can fill far from its fair value")
+            if o.get("stop_loss_stop_price") is not None and o.get("stop_loss_limit_price") is None:
+                later.append("stop: an option's stop goes as SL (NSE takes no SL-M on options), so the order needs "
+                             "stop_loss_limit_price (bharat-budget writes it); without it the stop would be rejected "
+                             "after the entry fills")
+            if o.get("premium_source") != "user":
+                later.append("premium: the premium is estimated from the last bhavcopy, and options move too fast for "
+                             "an end-of-day price. Read the live premium on Kite and re-plan (bharat-exit --entry)")
+            min_oi = int(_f(c.get("min_option_oi")) or 0)
+            oi = _f(o.get("oi"))
+            if oi is None or oi < min_oi:
+                later.append("liquidity: %s open interest is %s units, under your %s min_option_oi" % (
+                    sym, "unknown" if oi is None else format(int(oi), ","), format(min_oi, ",")))
+            if o.get("illiquid"):
+                later.append("liquidity: %s is marked illiquid (no trades in the last bhavcopy, or low open interest)"
+                             % sym)
+            exp = str(o.get("expiry") or "")
+            if not exp:
+                later.append("expiry: the option entry has no expiry date (bharat-budget writes it)")
+            elif exp < today:
+                later.append("expiry: %s expired on %s" % (sym, exp))
+            elif exp == today:
+                cut = hhmm(c.get("expiry_day_cutoff") or "13:00", "expiry_day_cutoff")
+                if (now_ist.hour, now_ist.minute) >= (cut.hour, cut.minute):
+                    later.append("expiry: %s expires today and it is past your %s expiry_day_cutoff: time decay "
+                                 "and gamma are at their worst in the last hours" % (sym, cut.strftime("%H:%M")))
+                else:
+                    warns.append("%s expires today: its premium decays fast and swings hard; no new entry after %s"
+                                 % (sym, cut.strftime("%H:%M")))
+        if fno and kind == "entry" and lots:
+            max_lots = 1 if _f(c.get("max_lots")) is None else int(_f(c["max_lots"]))
+            held_lots = int(max(held, 0) // lot) if lot else 0
+            if lots + held_lots > max_lots:
+                later.append("lots: %d lots%s is over your max_lots %d" % (
+                    lots, (" plus %d held" % held_lots) if held_lots else "", max_lots))
         if fut and kind == "entry" and lots:
             und = str(o.get("underlying") or "").upper() or (FUT_NAME.match(sym).group(1) if FUT_NAME.match(sym) else sym)
             mtab = c.get("margin_per_lot_inr") or {}
@@ -489,17 +547,19 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     later.append("margin: %d lot%s need %s, which leaves %s cash, under your %s%% buffer of %s" % (
                         lots, "" if lots == 1 else "s", money(need_margin), money(max(cash - need_margin, 0)),
                         _pct(c["cash_buffer_pct"]), money(buffer_inr)))
-            max_lots = int(_f(c.get("max_lots")) or 1)
-            held_lots = int(max(held, 0) // lot) if lot else 0
-            if lots + held_lots > max_lots:
-                later.append("lots: %d lots%s is over your max_lots %d" % (
-                    lots, (" plus %d held" % held_lots) if held_lots else "", max_lots))
             if typ == "market" and o.get("fut_price_source") != "user":
                 later.append("entry: the futures entry is an estimate from the bhavcopy basis (it can move 75 points "
                              "in a session), so a market order could fill far from the plan and break the max loss. "
                              "Send a limit order (bharat-budget size.py --limit) or give the live price "
                              "(bharat-exit --entry PRICE)")
-            if str(o.get("expiry") or "") == today:
+            exp = str(o.get("expiry") or "")
+            if not exp:
+                later.append("expiry: the futures entry has no expiry date (bharat-budget writes it), so the "
+                             "expiry-day check cannot run")
+            elif exp < today:
+                later.append("expiry: %s expired on %s; trade a live contract%s" % (
+                    sym, exp, (" (%s?)" % next_contract(sym)) if next_contract(sym) else ""))
+            elif exp == today:
                 nxt = next_contract(sym)
                 later.append("expiry: %s expires today; no new entry in an expiring contract%s" % (
                     sym, (": trade %s" % nxt) if nxt else ""))
@@ -508,7 +568,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "is blocked. Read the live price on Kite and re-plan (bharat-exit --entry PRICE)"
                              % (o.get("basis_date") or "an earlier day"))
         if value is not None and side == "buy" and kind == "entry" and not fut:
-            need = value / lev                 # the margin the broker blocks for an MIS buy
+            need = value / (1 if opt else lev)  # MIS margin; an option's premium is paid in full
             after_cash = cash - need
             if after_cash < -CENT and not c.get("allow_margin"):
                 later.append("cash: needs %s%s but only %s cash" % (
@@ -529,7 +589,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 over = value > held_value + CENT
             else:
                 over = held <= 0
-            if over and not c.get("allow_short"):
+            if over and not c.get("allow_short") and not opt:
                 reasons.append("short: selling more %s than you hold (%s shares); short selling is off. "
                                "If you bought it, record the fill first (ticket.py fill)" % (sym, _num(held)))
 
@@ -607,7 +667,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
             later.extend(win_reasons)
             b = bands.get(sym) or {}
-            if long and not fut and not (_f(b.get("band")) and _f(b.get("prev_close"))):
+            if long and not fno and not (_f(b.get("band")) and _f(b.get("prev_close"))):
                 warns.append("band: no price band known for %s, so the band check is off (bharat-entry --band, or "
                              "the band the scanner wrote)" % sym)
             if long and ref and _f(b.get("band")) and _f(b.get("prev_close")):
@@ -656,8 +716,19 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if kind == "entry" and side in ("buy", "sell"):
                 batch_entries += 1
                 batch_loss += max_loss or 0.0
-            if side == "buy" and need_margin is not None:
-                acct["cash"] -= need_margin
+            if fut:
+                # a lot holds margin, not its notional: the margin stays account value while the lot is open
+                if side == "buy" and need_margin is not None:
+                    acct["cash"] -= need_margin
+                    acct["values"][sym] = acct["values"].get(sym, 0.0) + need_margin
+                    batch_margin[sym] = batch_margin.get(sym, 0.0) + need_margin
+                elif side == "sell" and kind == "exit" and q and held > 0 and batch_margin.get(sym):
+                    freed = batch_margin[sym] * min(q / held, 1.0)
+                    batch_margin[sym] -= freed
+                    acct["cash"] += freed
+                    acct["values"][sym] -= freed
+                if q is not None:
+                    acct["shares"][sym] = held + (q if side == "buy" else -q)
             elif side == "buy":
                 if value is not None:
                     acct["cash"] -= value

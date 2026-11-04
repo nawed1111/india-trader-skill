@@ -76,6 +76,7 @@ SETTLE = 60      # seconds a closed bar may wait for Yahoo's data to catch up
 HOSTS = ("query2", "query1")
 INTERVALS = {"1m": 60, "5m": 300}
 DEFAULTS = {"no_entries_before": "09:30", "no_entries_after": "14:45"}
+OPT_DEFAULTS = {"min_option_oi": 50000, "risk_free_rate": 0.06}
 NEAR_BAND = 0.01  # warn within 1 % of the band limit
 EPOCH = datetime.datetime(1970, 1, 1)
 
@@ -157,6 +158,97 @@ def future_lines(f):
          "day, so the fill will differ." % (f["price"], f["basis_ratio"], f["basis_date"])) if f["price"] else
         ("Basis %.6f from the %s bhavcopy." % (f["basis_ratio"], f["basis_date"])))]
     return out + ["WARNING: " + w for w in f["warnings"]]
+
+
+# ---------------------------------------------------------------- index options
+
+def option_leg(rows, symbol, day, index_price, at_ist, right, steps_otm=0, expiry=None, premium=None, cfg=None,
+               premium_index=None, premium_at=None):
+    """The option for a signal on the index: contract, IV and premium (Black-76 on the parity forward).
+    The IV comes from a premium you give (Kite), else from the bhavcopy close: then the premium is estimated."""
+    c = dict(OPT_DEFAULTS)
+    c.update(cfg or {})
+    rate = float(c["risk_free_rate"])
+    exps = [e for e in india.option_expiries(rows, symbol) if e > day]
+    if expiry:
+        if expiry not in exps:
+            raise EntryError("no %s options expiring %s in the bhavcopy (expiries: %s)" % (
+                symbol, expiry, ", ".join(e.isoformat() for e in exps[:6])))
+    elif not exps:
+        raise EntryError("no %s option expiry after %s in the bhavcopy" % (symbol, day))
+    expiry = expiry or exps[0]
+    try:
+        strike = india.pick_strike(india.strikes(rows, symbol, expiry), index_price, right, steps_otm)
+        ratio = india.forward_ratio(rows, symbol, expiry, rate)
+    except ValueError as e:
+        raise EntryError(str(e))
+    row = india.option_row(rows, symbol, expiry, strike, right)
+    if not row:
+        raise EntryError("no %s %s %g %s in the bhavcopy" % (symbol, expiry, strike, right))
+    years = india.years_to_expiry(at_ist, expiry)
+    try:
+        if premium is not None:
+            source = "user"
+            if premium_index is not None:   # read later: solve at the index and the time it was read
+                iv = india.option_iv(right, float(premium), premium_index, ratio, strike,
+                                     india.years_to_expiry(premium_at, expiry), rate)
+            else:
+                iv = india.option_iv(right, float(premium), index_price, ratio, strike, years, rate)
+            price = round(float(premium), 2)
+        else:
+            source = "estimated"
+            closed = datetime.datetime.combine(row["date"], CLOSE, india.IST)
+            iv = india.option_iv(right, row["close"], row["underlying"], ratio, strike,
+                                 india.years_to_expiry(closed, expiry), rate)
+            price = india.tick_round(india.option_price(right, index_price, ratio, strike, years, iv, rate))
+    except ValueError as e:
+        raise EntryError("%s: %s" % (row["contract"], e))
+    warnings = []
+    min_oi = int(c["min_option_oi"] or 0)
+    illiquid = row["oi"] < min_oi or row["volume"] == 0
+    if row["oi"] < min_oi:
+        warnings.append("%s open interest is %s units, under your %s (min_option_oi): an illiquid strike, "
+                        "bharat-risk blocks it" % (row["contract"], format(row["oi"], ","), format(min_oi, ",")))
+    if row["volume"] == 0:
+        warnings.append("%s had no trades in the %s bhavcopy: an illiquid strike" % (row["contract"], row["date"]))
+    last = india.prev_trading_day(day)
+    if last is not None and row["date"] < last:
+        warnings.append("The bhavcopy is from %s, older than the last session (%s)." % (row["date"], last))
+    return {"contract": row["contract"], "expiry": expiry.isoformat(), "strike": strike, "right": right,
+            "lot": row["lot"], "premium": price, "premium_source": source, "iv": round(iv, 6), "oi": row["oi"],
+            "volume": row["volume"], "illiquid": illiquid, "years": years, "forward_ratio": ratio, "rate": rate,
+            "bhav_date": row["date"].isoformat(), "bhav_close": row["close"], "warnings": warnings}
+
+
+def attach_option(res, a, cfg, rows=None):
+    """For --instrument opt, add res["option"] at the trigger (or the last close while waiting)."""
+    if a.instrument != "opt":
+        return
+    res["instrument"] = "opt"
+    t = res.get("trigger")
+    price = t["price"] if t else (res.get("last") or {}).get("close")
+    if price is None:
+        return
+    day = datetime.date.fromisoformat(res["date"])
+    at = datetime.datetime.combine(day, parse_hhmm(t["close_time"], "trigger") if t else
+                                   datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S").time(), india.IST)
+    exp = datetime.date.fromisoformat(a.expiry) if a.expiry else None
+    now = datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=india.IST)
+    res["option"] = option_leg(rows if rows is not None else load_bhavcopy(a.bhavcopy, day), res["symbol"], day,
+                               price, at, a.right, a.steps_otm, exp, a.premium, cfg, a.premium_index, now)
+
+
+def option_lines(o):
+    if not o:
+        return []
+    out = ["Option: buy %s (%s %g, expires %s, lot %d). %s" % (
+        o["contract"], "call" if o["right"] == "CE" else "put", o["strike"], o["expiry"], o["lot"],
+        ("Premium Rs %.2f, given by you; implied volatility %.2f%% from it." % (o["premium"], 100 * o["iv"]))
+        if o["premium_source"] == "user" else
+        ("Premium about Rs %.2f, estimated: Black-76 on the forward (index x %.6f) with the implied volatility "
+         "%.2f%% of the %s close Rs %.2f, held constant. Options move fast: read the live premium on Kite and pass "
+         "--premium." % (o["premium"], o["forward_ratio"], 100 * o["iv"], o["bhav_date"], o["bhav_close"])))]
+    return out + ["WARNING: " + w for w in o["warnings"]]
 
 
 # ---------------------------------------------------------------- time
@@ -407,6 +499,9 @@ def read_config(path):
         for k in DEFAULTS:
             if doc.get(k):
                 cfg[k] = doc[k]
+        for k in OPT_DEFAULTS:
+            if doc.get(k) is not None:
+                cfg[k] = doc[k]
     for k in DEFAULTS:
         parse_hhmm(cfg[k], k)
     return cfg
@@ -424,8 +519,9 @@ def prev_session_close(chart, day):
 
 
 def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=None,
-             min_volume_x=None, cfg=None, band=None):
-    """Pure function: the setup's status at now_utc from one session's bars."""
+             min_volume_x=None, cfg=None, band=None, below=False):
+    """Pure function: the setup's status at now_utc from one session's bars.
+    below=True is the mirror for a bought put: a close BELOW the range low (or the level)."""
     cfg = cfg or dict(DEFAULTS)
     if interval not in INTERVALS:
         raise EntryError("--interval is 5m or 1m")
@@ -444,7 +540,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
            "phase": "", "reason": "", "opening_range": None, "level": None, "trigger": None,
            "last": None, "forming": None, "min_volume_x": min_volume_x,
            "prev_close": None, "calendar_known": day.year in india.HOLIDAY_YEARS, "band": band,
-           "near_band": None, "_bars": []}
+           "near_band": None, "index_side": "down" if below else "up", "_bars": []}
     dt = chart.get("data_time")
     res["data_time"] = to_local(utc_of(dt)).strftime("%Y-%m-%d %H:%M:%S") if dt else None
     ok, why = trading_day(day)
@@ -513,17 +609,21 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
         if not or_bars:
             res.update(status="no-data", phase="open", reason="Yahoo sent no bars for the opening range")
             return res
-        lvl = max(b["h"] for b in or_bars)
+        lvl = min(b["l"] for b in or_bars) if below else max(b["h"] for b in or_bars)
     else:
         lvl = float(level)
     res["level"] = r2(lvl)
 
+    def crossed(c):
+        return c < lvl if below else c > lvl
+    side_word = "below" if below else "above"
+    edge = "the range low" if below else "the range high"
     first_slot = n_or if setup == "orb" else 0
     trig, thin = None, []
     for b in bars:
         if b["slot"] < first_slot or b["end"] < before or b["end"] > cutoff:
             continue
-        if b["c"] > lvl:
+        if crossed(b["c"]):
             vx = (b["v"] / avg_vol) if avg_vol else None
             if min_volume_x and (vx is None or vx < min_volume_x):
                 thin.append(b)
@@ -532,7 +632,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
             break
     last = bars[-1] if bars else None
     mark = trig or last
-    if band and res["prev_close"] and mark:
+    if band and res["prev_close"] and mark and not below:
         upper = india.tick_round(res["prev_close"] * (1 + band / 100.0), mode="down")
         if mark["c"] >= upper * (1 - NEAR_BAND):
             res["near_band"] = {"band": band, "upper": r2(upper), "prev_close": res["prev_close"],
@@ -544,10 +644,11 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     if trig:
         vx = (trig["v"] / avg_vol) if avg_vol else None
         res.update(status="triggered", phase="open" if local < close_dt else "after-close",
-                   reason="the %s bar closed above %s" % (short(trig["et"]), "the range high" if setup == "orb" else "the level"))
+                   reason="the %s bar closed %s %s" % (short(trig["et"]), side_word, edge if setup == "orb" else "the level"))
         res["trigger"] = {"time": ampm(trig["end"]), "close_time": hm(trig["end"]), "bar_start": hm(trig["et"]),
                           "bar_index": trig["slot"], "price": r2(trig["c"]), "close": trig["c"],
-                          "volume": trig["v"], "volume_x": r2(vx), "pct_over": r2(100.0 * (trig["c"] / lvl - 1))}
+                          "volume": trig["v"], "volume_x": r2(vx), "pct_over": r2(100.0 * (trig["c"] / lvl - 1)),
+                          "et": hm(trig["end"])}
         res["minutes_since"] = int((local - trig["end"]).total_seconds() // 60)
         if dt and utc_of(dt) < local_to_utc(trig["end"]):
             res["data_note"] = ("Yahoo's last trade is %s, before this bar closed: its close can still move a cent or two"
@@ -556,23 +657,23 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     if not bars:
         res.update(status="no-data", phase="open", reason="Yahoo sent no bars for %s yet" % day.isoformat())
         return res
-    what = "close above the range high Rs %.2f" % lvl if setup == "orb" else "close above Rs %.2f" % lvl
+    what = ("close %s %s Rs %.2f" % (side_word, edge, lvl)) if setup == "orb" else ("close %s Rs %.2f" % (side_word, lvl))
     if local >= cutoff and not (pending and pending["end"] <= cutoff):
         res.update(status="expired", phase="after-close" if local >= close_dt else "after-cutoff",
                    reason="no %s by %s, the last time for a new entry" % (what, short(cutoff)))
         return res
     res["phase"] = "open"
-    if last["c"] > lvl and last in thin:
-        res["reason"] = "the %s bar closed above at Rs %.2f but on %.2fx the range's volume, under your %.2fx" % (
-            short(last["et"]), last["c"], last["v"] / avg_vol if avg_vol else 0, min_volume_x)
-    elif last["c"] > lvl and last["end"] < before:
-        res["reason"] = "the %s bar closed above at Rs %.2f, but no entries before %s (config)" % (
-            short(last["et"]), last["c"], short(before))
+    if crossed(last["c"]) and last in thin:
+        res["reason"] = "the %s bar closed %s at Rs %.2f but on %.2fx the range's volume, under your %.2fx" % (
+            short(last["et"]), side_word, last["c"], last["v"] / avg_vol if avg_vol else 0, min_volume_x)
+    elif crossed(last["c"]) and last["end"] < before:
+        res["reason"] = "the %s bar closed %s at Rs %.2f, but no entries before %s (config)" % (
+            short(last["et"]), side_word, last["c"], short(before))
     else:
         gap = lvl - last["c"]
         res["reason"] = "last close Rs %.2f (%s bar), Rs %.2f %s %s (%+.2f%%)" % (
             last["c"], short(last["et"]), abs(gap), "under" if gap >= 0 else "over",
-            "the range high Rs %.2f" % lvl if setup == "orb" else "the level Rs %.2f" % lvl,
+            ("%s Rs %.2f" % (edge, lvl)) if setup == "orb" else "the level Rs %.2f" % lvl,
             100.0 * (last["c"] / lvl - 1))
     return res
 
@@ -593,7 +694,8 @@ def entry_doc(res, now_utc):
             "opening_range": {"high": orr["high"], "low": orr["low"], "minutes": orr["minutes"]} if orr else None,
             "source": "yahoo", "checked_at": iso(now_utc), "reason": res.get("reason"),
             "prev_close": res.get("prev_close"), "band": res.get("band"), "near_band": res.get("near_band"),
-            "instrument": res.get("instrument", "eq"), "future": res.get("future")}
+            "instrument": res.get("instrument", "eq"), "future": res.get("future"),
+            "index_side": res.get("index_side", "up"), "option": res.get("option")}
 
 
 def write_json(path, doc):
@@ -637,9 +739,12 @@ def describe(res):
     label = PHASE_LABEL.get(res["phase"]) or LABEL.get(res["status"], res["status"].upper())
     t = res.get("trigger")
     if t:
-        out.append("TRIGGERED %s at Rs %.2f: the %s bar (bar %d) closed above %s Rs %.2f (%+.2f%%%s)." % (
+        down = res.get("index_side") == "down"
+        out.append("TRIGGERED %s at Rs %.2f: the %s bar (bar %d) closed %s %s Rs %.2f (%+.2f%%%s)." % (
             t["time"], t["price"], short(datetime.datetime.strptime(t["bar_start"], "%H:%M")), t["bar_index"],
-            "the range high" if res["setup"] == "orb" else "the level", res["level"], t["pct_over"],
+            "below" if down else "above",
+            ("the range low" if down else "the range high") if res["setup"] == "orb" else "the level", res["level"],
+            t["pct_over"],
             (", %.2fx the range's volume" % t["volume_x"]) if res.get("min_volume_x") and t.get("volume_x") else ""))
         step = INTERVALS[res["interval"]] // 60
         if res.get("minutes_since", 0) > step and res.get("last"):
@@ -814,6 +919,26 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
 def _check_instrument(a, sym):
     if a.instrument == "fut" and sym not in FUT_INDEX:
         raise EntryError("--instrument fut is for NIFTY or BANKNIFTY index futures (P2), not %s" % sym)
+    if a.instrument == "opt":
+        if sym not in FUT_INDEX:
+            raise EntryError("--instrument opt is for NIFTY or BANKNIFTY index options (P3), not %s" % sym)
+        if a.right not in ("CE", "PE"):
+            raise EntryError("--instrument opt needs --right CE or PE (a call or a put; this pack only buys them)")
+        if a.premium is not None and a.premium <= 0:
+            raise EntryError("--premium must be a price above 0")
+        if a.premium_index is not None and a.premium is None:
+            raise EntryError("--premium-index is the index when you read --premium: give both")
+        if a.steps_otm < 0:
+            raise EntryError("--steps-otm counts strikes out of the money: 0 or more")
+        if a.expiry:
+            try:
+                datetime.date.fromisoformat(a.expiry)
+            except ValueError:
+                raise EntryError("--expiry wants a date like 2026-10-27")
+    elif a.right or a.premium is not None or a.expiry or a.steps_otm or a.premium_index is not None:
+        raise EntryError("--right, --premium, --expiry and --steps-otm are for options: add --instrument opt")
+    if a.fut_price is not None and a.instrument != "fut":
+        raise EntryError("--fut-price is the futures price: add --instrument fut")
     if a.fut_price is not None and a.fut_price <= 0:
         raise EntryError("--fut-price must be a price above 0")
 
@@ -830,7 +955,8 @@ def _opts(a, cfg):
     if a.band is not None and a.band <= 0:
         raise EntryError("--band is the stock's NSE price band in percent (2, 5, 10 or 20)")
     return {"setup": a.setup, "or_minutes": a.or_minutes, "interval": a.interval, "level": a.level,
-            "min_volume_x": a.min_volume_x, "cfg": cfg, "band": a.band}
+            "min_volume_x": a.min_volume_x, "cfg": cfg, "band": a.band,
+            "below": a.instrument == "opt" and a.right == "PE"}
 
 
 def _load(a, sym, now):
@@ -851,12 +977,13 @@ def cmd_check(a):
     chart, now = _load(a, sym, parse_now(a.now) if a.now else None)
     res = evaluate(chart, now, **opts)
     attach_future(res, a)
+    attach_option(res, a, cfg)
     if a.write:
         write_json(a.write, entry_doc(res, now))
     if a.json:
         print(json.dumps(public(res), indent=2))
     else:
-        for line in describe(res) + future_lines(res.get("future")):
+        for line in describe(res) + future_lines(res.get("future")) + option_lines(res.get("option")):
             print(line)
         if a.write:
             print("Wrote %s (status %s)." % (a.write, res["status"]))
@@ -889,12 +1016,13 @@ def cmd_watch(a):
         until = datetime.datetime.combine(to_local(now_fn()).date(), t)
 
     rows = None
-    if a.instrument == "fut":  # fetched now: a download failure at the trigger would lose the signal
+    if a.instrument in ("fut", "opt"):  # fetched now: a download failure at the trigger would lose the signal
         rows = load_bhavcopy(a.bhavcopy, to_local(now_fn()).date())
 
     def on_trigger(res, now):
         attach_future(res, a, rows)
-        for line in future_lines(res.get("future")):
+        attach_option(res, a, cfg, rows)
+        for line in future_lines(res.get("future")) + option_lines(res.get("option")):
             print(line, flush=True)
         write_json(a.out, entry_doc(res, now))
         print("Wrote %s." % a.out, flush=True)
@@ -979,10 +1107,15 @@ def main(argv=None):
         p.add_argument("--now", help='pretend it is this IST time, e.g. "2026-10-19 10:15"')
         p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON (.json/.json.gz) or a folder")
         p.add_argument("--config", default="trader/config.json")
-        p.add_argument("--instrument", choices=["eq", "fut"], default="eq",
+        p.add_argument("--instrument", choices=["eq", "fut", "opt"], default="eq",
                        help="fut: NIFTY/BANKNIFTY index futures; the signal is read on the index")
         p.add_argument("--bhavcopy", metavar="FILE", help="F&O bhavcopy (default: download the last session's)")
         p.add_argument("--fut-price", type=float, help="the futures price you see on Kite (beats the basis estimate)")
+        p.add_argument("--right", type=str.upper, choices=["CE", "PE"], help="--instrument opt: buy a call or a put")
+        p.add_argument("--steps-otm", type=int, default=0, help="strikes out of the money from ATM (default 0)")
+        p.add_argument("--expiry", help="option expiry YYYY-MM-DD (default: the nearest that is not today)")
+        p.add_argument("--premium", type=float, help="the option premium you see on Kite (sets the implied volatility)")
+        p.add_argument("--premium-index", type=float, help="the index when you read --premium (default: the trigger's)")
 
     p = sub.add_parser("check", help="the setup's status right now")
     p.add_argument("symbol")

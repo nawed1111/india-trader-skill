@@ -387,3 +387,132 @@ class ReviewFixes(unittest.TestCase):
         code, _, err = run(["--orders", ORDERS_PATH, "--config", live, "--now", NOW, "--no-write"])
         self.assertEqual(code, 1)
         self.assertIn("--now and --today are for tests and paper only", err)
+
+
+class FuturesDeferred(unittest.TestCase):
+    def test_the_fno_gate_reads_instrument_and_exchange(self):
+        # a contract name that does not look like one is still F&O on NFO
+        r = one([fut_order(symbol="NIFTYOCT")], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("allow_fno", " ".join(r["reasons"]))
+
+    def test_an_expired_contract_blocks(self):
+        r = one([fut_order(expiry="2026-10-20")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("expired", " ".join(r["reasons"]))
+
+    def test_an_entry_with_no_expiry_blocks(self):
+        o = fut_order()
+        del o["expiry"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("expiry", " ".join(r["reasons"]))
+
+    def test_futures_fields_are_in_the_fingerprint(self):
+        o = fut_order()
+        for k, v in (("lot", 75), ("expiry", "2026-11-23"), ("basis_estimated", True), ("instrument", "eq"),
+                     ("underlying", "BANKNIFTY"), ("fut_price_source", "user"), ("lots", 2)):
+            self.assertNotEqual(check.fingerprint(o), check.fingerprint(dict(o, **{k: v})), k)
+            self.assertEqual(check.fingerprint(dict(o, **{k: v})), ticket.fingerprint(dict(o, **{k: v})), k)
+
+    def test_max_lots_zero_blocks(self):
+        r = one([fut_order()], fut_cfg(max_lots=0), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("max_lots 0", " ".join(r["reasons"]))
+
+    def test_a_futures_buy_earlier_in_the_batch_is_held(self):
+        buy = fut_order()
+        sell = {"symbol": EX.FUT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "market", "time_in_force": "day", "instrument": "fut", "lot": EX.FUT_LOT}
+        res = one([buy, sell], fut_cfg(), now=FUT_NOW)
+        self.assertEqual([r["verdict"] for r in res["results"]], ["PASS", "PASS"], res)
+        self.assertEqual(res["results"][1]["kind"], "exit")
+        self.assertEqual(res["cash_after"], 200000)   # closing the lot frees its margin
+
+
+def opt_order(**over):
+    tb = load("bharat-budget", "size")
+    import test_budget as TB
+    plan = dict(TB.OPT_PLAN, premium_source=over.pop("_source", "user"))
+    o = tb.bracket_order(tb.size_trade(plan, fut_cfg(), today=EX.OPT_DATE))
+    o.update(over)
+    return o
+
+
+class Options(unittest.TestCase):
+    def test_the_example_passes_with_option_costs(self):
+        r = one([opt_order()], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual((r["verdict"], r["reasons"]), ("PASS", []), r)
+        self.assertEqual(r["max_loss"], EX.OPT_MAX_LOSS)
+        self.assertIn("costs Rs %s at the stop" % "{:,.2f}".format(EX.OPT_COSTS_AT_STOP), " ".join(r["info"]))
+
+    def test_an_estimated_premium_blocks(self):
+        r = one([opt_order(_source="estimated")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("estimated", " ".join(r["reasons"]))
+
+    def test_an_opening_sell_blocks_whatever_the_config(self):
+        o = opt_order(side="sell")
+        r = one([o], fut_cfg(allow_short=True), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("option selling is not part of this pack", " ".join(r["reasons"]))
+
+    def test_selling_a_bought_option_is_an_exit(self):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.OPT_CONTRACT, "shares": 65, "lots": []}]}
+        sell = {"symbol": EX.OPT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+        r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
+
+    def test_a_market_order_blocks(self):
+        o = opt_order(type="market")
+        del o["limit_price"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("limit", " ".join(r["reasons"]))
+
+    def test_expiry_day_after_the_cutoff_blocks(self):
+        o = opt_order(expiry=EX.OPT_DATE)
+        r = one([o], fut_cfg(), now="2026-10-21 13:05")["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("expiry_day_cutoff", " ".join(r["reasons"]))
+        r = one([o], fut_cfg(), now="2026-10-21 12:00")["results"][0]
+        self.assertEqual(r["verdict"], "PASS", r)
+        self.assertIn("expires today", " ".join(r["warnings"]))
+
+    def test_an_illiquid_strike_blocks(self):
+        r = one([opt_order(oi=20000)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("min_option_oi", " ".join(r["reasons"]))
+        r = one([opt_order(illiquid=True)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+
+    def test_costs_block_a_cheap_option(self):
+        # Rs 3 premium, 1 lot: Rs 40 of brokerage alone on a Rs 195 position
+        o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="4.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 4.0})
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("costs:", " ".join(r["reasons"]))
+
+    def test_option_fields_are_in_the_fingerprint(self):
+        o = opt_order()
+        for k, v in (("right", "PE"), ("strike", 23200.0), ("premium_source", "estimated"), ("oi", 1)):
+            self.assertNotEqual(check.fingerprint(o), check.fingerprint(dict(o, **{k: v})), k)
+            self.assertEqual(check.fingerprint(dict(o, **{k: v})), ticket.fingerprint(dict(o, **{k: v})), k)
+
+
+class ReviewFixesP3(unittest.TestCase):
+    def test_an_option_stop_without_its_limit_blocks(self):
+        o = opt_order()
+        del o["stop_loss_limit_price"]          # the ticket would send SL-M, which NSE rejects on options
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("stop_loss_limit_price", " ".join(r["reasons"]))
+
+    def test_an_unknown_nfo_name_fails_closed(self):
+        o = opt_order(symbol="NIFTY 26OCT 23100 CE")
+        del o["instrument"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("NFO", " ".join(r["reasons"]))

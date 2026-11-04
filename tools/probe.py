@@ -5,6 +5,7 @@ tests/fixtures/p0/<name>. Prints one line per source: OK <bytes> or FAIL <reason
 
     python3 tools/probe.py [--only name,name] [--day YYYYMMDD]
     python3 tools/probe.py --p2 [--days 20261016,20261019]   # P2 sources -> tests/fixtures/p2/
+    python3 tools/probe.py --p3 --expiry 09-Nov-2026         # NSE option chain -> tests/fixtures/p3/
 """
 
 import argparse
@@ -102,21 +103,29 @@ def p2_sources(days):
     return out
 
 
+def p3_sources(expiry):
+    chain = "https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol=NIFTY&expiry=" + expiry
+    return [("nse-option-chain-NIFTY.json", chain, "https://www.nseindia.com/option-chain", "application/json")]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--day", default="")
     ap.add_argument("--p2", action="store_true")
     ap.add_argument("--days", default="20261016,20261019")
+    ap.add_argument("--p3", action="store_true")
+    ap.add_argument("--expiry", default="09-Nov-2026", help="option chain expiry, DD-Mon-YYYY")
     a = ap.parse_args(argv)
     global OUT
     day = date(int(a.day[:4]), int(a.day[4:6]), int(a.day[6:])) if a.day else last_weekday(date.today() - timedelta(days=1))
-    if a.p2:
-        OUT = os.path.join(ROOT, "tests", "fixtures", "p2")
+    if a.p2 or a.p3:
+        OUT = os.path.join(ROOT, "tests", "fixtures", "p3" if a.p3 else "p2")
     os.makedirs(OUT, exist_ok=True)
     only = set(x for x in a.only.split(",") if x)
     bad = 0
-    for name, url, ref, acc in (p2_sources(a.days.split(",")) if a.p2 else sources(day)):
+    srcs = p3_sources(a.expiry) if a.p3 else p2_sources(a.days.split(",")) if a.p2 else sources(day)
+    for name, url, ref, acc in srcs:
         if only and not any(o in name for o in only):
             continue
         try:

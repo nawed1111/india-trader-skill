@@ -21,6 +21,8 @@ CONFIG_KEYS = {
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "broker": "zerodha", "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False,
     "allow_short": False, "margin_per_lot_inr": {}, "max_lots": 1,
+    "max_premium_inr": None, "min_option_oi": 50000, "expiry_day_cutoff": "13:00", "risk_free_rate": 0.06,
+    "stop_limit_ticks": 10,
 }
 
 
@@ -245,3 +247,78 @@ class Rules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FuturesDeferred(unittest.TestCase):
+    def test_max_lots_zero_means_no_lots(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(max_lots=0), today=EX.FUT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "max lots"))
+        self.assertIsNone(size.bracket_order(s))
+
+    def test_the_index_price_in_prices_json_is_not_the_futures_price(self):
+        d = tempfile.mkdtemp()
+        paths = {}
+        for name, doc in (("plan", FUT_PLAN), ("config", fut_cfg()),
+                          ("prices", {"prices": {"NIFTY": 23900.0}, "as_of": "2026-10-21T04:05:00Z"})):
+            paths[name] = os.path.join(d, name + ".json")
+            with open(paths[name], "w") as fh:
+                json.dump(doc, fh)
+        code, text, _ = run(["--plan", paths["plan"], "--config", paths["config"], "--now", "2026-10-21 09:36",
+                             "--prices", paths["prices"], "--portfolio", os.path.join(d, "none.json")])
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("sized at", text)
+
+
+OPT_PLAN = {"created_by": "bharat-exit", "symbol": "NIFTY", "side": "buy", "date": EX.OPT_DATE, "setup": "orb",
+            "entry_time": EX.FUT_TRIGGER_AT, "instrument": "opt", "contract": EX.OPT_CONTRACT, "lot": EX.OPT_LOT,
+            "expiry": EX.OPT_EXPIRY, "strike": EX.OPT_STRIKE, "right": "CE", "iv": EX.OPT_IV,
+            "forward_ratio": 1.000362, "rate": 0.06, "premium_source": "estimated", "oi": EX.OPT_OI, "volume": 1000,
+            "illiquid": False, "index_entry": EX.FUT_TRIGGER_CLOSE, "index_stop": EX.FUT_INDEX_STOP,
+            "index_target": EX.OPT_INDEX_TARGET, "index_side": "up", "entry": EX.OPT_PREMIUM, "stop": EX.OPT_STOP,
+            "target": EX.OPT_TARGET, "risk_per_share": EX.OPT_RISK_PER_UNIT, "risk_per_unit": EX.OPT_RISK_PER_UNIT,
+            "flat_by": "15:15"}
+
+
+def opt_cfg(**over):
+    c = cfg(max_loss_per_trade_inr=EX.FUT_MAX_LOSS_LIMIT, allow_fno=True)
+    c.update(over)
+    return c
+
+
+class Options(unittest.TestCase):
+    def test_the_example_sizes_by_premium(self):
+        s = size.size_trade(dict(OPT_PLAN), opt_cfg(), today=EX.OPT_DATE)
+        self.assertIsNone(s["refusal"])
+        self.assertEqual((s["lots"], s["qty"], s["value"]), (EX.OPT_LOTS, EX.OPT_LOTS * EX.OPT_LOT, EX.OPT_PREMIUM_PAID))
+        self.assertEqual((s["costs_at_stop"], s["max_loss"]), (EX.OPT_COSTS_AT_STOP, EX.OPT_MAX_LOSS))
+        names = {l["name"]: l["lots"] for l in s["limits"]}
+        self.assertEqual(names["max loss"], 2)        # 2 x 2,574 + costs <= 7,000; 3 lots is over
+        self.assertEqual(names["max lots"], 1)
+        self.assertEqual(names["cash"], 16)           # 1,80,000 / (65 x 162.95)
+        o = size.bracket_order(s)
+        self.assertEqual((o["exchange"], o["product"], o["symbol"], o["qty"], o["instrument"], o["type"],
+                          o["limit_price"]), ("NFO", "MIS", EX.OPT_CONTRACT, "65", "opt", "limit", "162.95"))
+        self.assertEqual((o["stop_loss_stop_price"], o["take_profit_limit_price"]), ("123.35", "209.55"))
+        self.assertEqual((o["right"], o["strike"], o["expiry"], o["premium_source"]),
+                         ("CE", EX.OPT_STRIKE, EX.OPT_EXPIRY, "estimated"))
+        text = size.plan_report(s, o)
+        self.assertIn("1 lot of %s" % EX.OPT_CONTRACT, text)
+        self.assertIn("paid in full", text)
+
+    def test_it_is_always_a_limit_order(self):
+        s = size.size_trade(dict(OPT_PLAN), opt_cfg(), today=EX.OPT_DATE, limit=None)
+        self.assertEqual(size.bracket_order(s)["type"], "limit")
+
+    def test_max_premium_caps_the_lots(self):
+        s = size.size_trade(dict(OPT_PLAN), opt_cfg(max_premium_inr=5000), today=EX.OPT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "max premium"))
+        self.assertIn("max_premium_inr", s["refusal"])
+
+    def test_the_premium_is_paid_from_cash(self):
+        s = size.size_trade(dict(OPT_PLAN), opt_cfg(budget=10000), today=EX.OPT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "cash"))
+
+    def test_fno_off_refuses(self):
+        with self.assertRaises(size.SizeError) as cm:
+            size.size_trade(dict(OPT_PLAN), opt_cfg(allow_fno=False), today=EX.OPT_DATE)
+        self.assertIn("allow_fno", str(cm.exception))

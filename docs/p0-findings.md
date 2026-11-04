@@ -130,3 +130,76 @@ Checked 2026-11-04. Raw files are in `tests/fixtures/p2/`. Re-run with
 1. **Task 2, `lot_size`:** the bhavcopy row's lot is the contract's lot; `fo_mktlots.csv` covers months the bhavcopy has no row for (a live plan for a new month). The planned failing case `NIFTY 2031-06` exists (65); use BANKNIFTY Dec 2027 (blank) or NIFTY Jul 2031 (no column).
 2. **Task 8:** keep SL-M for futures (the SL variant and `stop_limit_ticks` are not needed until P3). Add `market_protection: -1` to every MARKET and SL-M Kite call, equity included (a P1 fix).
 3. **Tasks 3, 4, 7:** the example is 21 Oct, not 19 Oct; the previous session is 19 Oct; the 16 Oct bhavcopy is the stale one. Given the 75-point basis swing, the futures stop and target should be carried as points from the entry (re-anchored on the fill), and the ticket should say the entry price is estimated.
+
+# P3 findings
+
+Checked 2026-11-04 (after the close). Raw files are in `tests/fixtures/p3/`; the example's bhavcopies are
+the P2 ones (`tests/fixtures/p2/fo-bhavcopy-2026101{6,9}`, `-20261021`). Re-run the chain with
+`python3 -I tools/probe.py --p3 --expiry 09-Nov-2026`.
+
+## Costs (options)
+
+`zerodha-calc-opt.json`: the three planned cases, run through `cal_options` on Zerodha's page. Brokerage Rs 20
+an order flat (Rs 40 a round trip), STT 0.15 % of the sell premium to the whole rupee, exchange 0.03503 % plus
+IPFT 0.0005 % each to 2 dp, SEBI 0.0001 %, stamp 0.003 % of the buy to the whole rupee, GST 18 % on brokerage +
+exchange + SEBI. `india.round_trip("opt", ...)` matches all three to the paisa; `RATES["opt"]` needs no change.
+The cheap case (65 x Rs 3.00 to 3.50) costs Rs 47.38 against a Rs 32.50 gross gain.
+
+## The model
+
+- **Our Black-Scholes matches NSE's IV.** `iv-check.json`: four NIFTY 9 Nov strikes from NSE's option chain
+  (ATM call and put 23950, 24050 CE, 23850 PE). With NSE's own premium and spot, rate 0.06, no dividend and time
+  = calendar minutes to 15:30 IST on expiry / (365 x 1440), our IV lands within **0.06 points** of NSE's on every
+  row (the plan allows 0.5). Rate 0 or 0.10 misses by up to 1 point, so NSE uses about 6 %.
+- **But spot Black-Scholes splits calls from puts.** On the same strike the put's IV is far above the call's:
+  4 Nov 18.0 vs 11.7 (23950); 21 Oct 21.6 vs 12.5 (23100, 27 Oct expiry). The options are priced off the
+  forward, and NIFTY's futures traded 68 points under spot on 21 Oct (P2 finding). Priced as Black-76 on the
+  forward, the same premiums give one IV: 21 Oct 14.5 to 15.3 for both rights across 23000-23200; 19 Oct 12.4
+  to 12.7.
+- **The forward from put-call parity** (`F = K + e^(rT) (C - P)` at the ATM strike, same expiry, from the
+  bhavcopy closes) is within 3 points of the future's close for the monthly expiry (19 Oct 22897.25 vs
+  22895.20; 21 Oct 22739.94 vs 22743.30) and gives a forward for weekly expiries too, which have no future.
+- No free intraday option prices exist, so the premium at a trigger can only be modelled, never checked.
+
+## Orders and rules
+
+- **SL-M is not allowed for options** (NSE since 27 Sep 2021; P2 finding). The stop goes as SL with a limit a
+  few ticks through the trigger.
+- **Market orders:** Zerodha blocks them for stock options; index options take them only with market
+  protection, which is mandatory on API orders since 1 Apr 2026. The plan's LIMIT-only entries stand.
+  Zerodha also rejects a limit buy over 150 % above the LTP or a sell under 50 % below it, and blocks fresh
+  orders in low-OI contracts (exits always allowed): both agree with `min_option_oi` and limit exits.
+- **STT on an exercised ITM option: 0.15 % of the intrinsic value**, paid by the buyer (up from 0.125 %, from
+  1 Apr 2026; secondary sources, not the Finance Act text). The 15:00 expiry alert's message stands.
+- **Freeze limits from 2 Nov 2026** (NSE/FAOP/77189, via Zerodha TradingQnA): NIFTY 1,800 units (27 lots),
+  BANKNIFTY 900 (30 lots). An order above it must be sliced. The example (1 lot) is far under.
+- **Symbols, from the bhavcopy:** weekly `NIFTY26O1923100CE` (YY, month code 1-9/O/N/D, DD), monthly
+  `NIFTY26OCT23100CE`. A weekly that falls in the monthly's week is the monthly (27 Oct has only `NIFTY26OCT...`).
+  The 20 Oct Dussehra holiday moved that week's expiry to Monday 19 Oct.
+- **Units:** bhavcopy `OpnIntrst` is in units; the NSE chain's `openInterest` is in contracts (lots). An
+  expiring option's `SttlmPric` is the index, not a premium; use `ClsPric`.
+
+## Worked example
+
+Same session as P2: **NIFTY, 21 Oct 2026**, ORB trigger at 9:35 on the index at 23115.65.
+
+- Contract: **NIFTY26OCT23100CE** (ATM: 23115.65 to the nearest 50), expiry Tue 27 Oct, lot 65. The 19 Oct weekly
+  expired on 19 Oct, so 27 Oct is the nearest expiry that is not today.
+- Last session's bhavcopy (19 Oct): close **87.25** at index 22888.95, OI 49,34,930 units.
+- Time to expiry at the trigger: 8,995 minutes (21 Oct 9:35 to 27 Oct 15:30) = 0.017114 years.
+- Spot Black-Scholes (the plan as written): IV 11.92 % from 87.25 with 8 days left, premium at the trigger
+  **164.25**.
+- Black-76 on the future's basis: IV 12.56 %, forward 23121.96, premium 162.55. On the parity forward (the model
+  chosen, ratio 1.000362 from the 19 Oct ATM pair): IV **12.50 %**, premium **162.95**.
+- That day the option closed at 50.05 (the index fell to 22811.35 by the close): the bought call lost.
+
+## What this changes in the plan (for review)
+
+1. **Model (Tasks 2-5), a choice:** (a) the plan as written, spot Black-Scholes; or (b) recommended: Black-76
+   on a forward = index x the parity ratio from the bhavcopy (same expiry), held constant for the replay, the
+   way P2 holds the futures basis. (b) needs no new pricing function (`bs_price` with spot = F e^(-rT)), keeps
+   `iv-check.json` as the test of the formula, and stops a put's IV reading 6-9 points above the call's.
+2. **Task 2:** test the symbol round trip on the 19 Oct bhavcopy (it has weekly, holiday-shifted and monthly
+   names); pick strikes by `ClsPric`, never `SttlmPric`.
+3. **Task 3:** the example's expiry is the 27 Oct monthly; the estimated premium is 164.25 (a) or 162.55 (b).
+4. **Task 7:** the stop is SL (limit `stop_limit_ticks` below), as planned; entries and flatten stay LIMIT.

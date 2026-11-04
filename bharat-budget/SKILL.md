@@ -178,6 +178,15 @@ NFO, `product` MIS, `symbol` the contract, `qty` lots x lot, with
 One NIFTY lot on the 21 Oct 2026 example risks Rs 6,201.78 with costs: the
 default Rs 1,000 max loss refuses it. Say so; never raise a limit for the user.
 
+## Index options (P3, buying only)
+
+An options plan (`instrument: opt`) is sized in whole lots by premium. The
+premium is paid in full from the cash (no margin, no leverage). Limits:
+max loss (lots x lot x (premium - premium stop) + Zerodha's option charges
+at the stop), cash after the buffer, `max_premium_inr` if set, `max_lots`.
+The order is always a LIMIT buy at the premium on NFO, MIS, with an SL
+stop whose limit is `stop_limit_ticks` (default 10) ticks under the trigger.
+
 ## What it never does
 
 It never places, approves or schedules an order, never raises a limit on its

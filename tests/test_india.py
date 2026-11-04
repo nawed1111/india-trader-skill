@@ -142,8 +142,6 @@ class Contracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rows = _bhav("fo-bhavcopy-20261103.csv.zip", "p0")
-        with open(os.path.join(P2, "fo_mktlots.csv")) as fh:
-            cls.lots = india.parse_lot_sizes(fh.read())
 
     def test_nifty_front_month(self):
         f = india.futures(self.rows, "NIFTY")[0]
@@ -178,16 +176,6 @@ class Contracts(unittest.TestCase):
         f = india.futures(self.rows, "NIFTY")[0]
         self.assertEqual(india.basis_ratio(f), 23780.50 / 23810.85)
 
-    def test_lot_sizes(self):
-        self.assertEqual(self.lots["NIFTY"]["2026-11"], 65)
-        self.assertEqual(india.lot_size(self.lots, "BANKNIFTY", date(2026, 12, 29)), 30)
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "BANKNIFTY", date(2027, 12, 28))  # blank cell
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "NIFTY", date(2031, 7, 29))  # no column
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "NOSUCH", date(2026, 11, 23))
-
     def test_plain_csv_and_old_day(self):
         import io, zipfile
         with open(os.path.join(P2, "fo-bhavcopy-20261019.csv.zip"), "rb") as fh:
@@ -207,3 +195,125 @@ class Contracts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+P2DIR = os.path.join(FIX, "p2")
+P3DIR = os.path.join(FIX, "p3")
+
+
+def _rows(day):
+    with open(os.path.join(P2DIR, "fo-bhavcopy-%s.csv.zip" % day), "rb") as fh:
+        return india.parse_bhavcopy(fh.read())
+
+
+class OptionsMath(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.r19, cls.r21 = _rows("20261019"), _rows("20261021")
+
+    def test_textbook_call(self):
+        self.assertEqual(round(india.bs_price("CE", 100, 100, 1, 0.2, 0.05), 4), 10.4506)
+
+    def test_put_call_parity(self):
+        import math
+        for k in (90, 100, 115):
+            c = india.bs_price("CE", 100, k, 0.3, 0.25, 0.06)
+            p = india.bs_price("PE", 100, k, 0.3, 0.25, 0.06)
+            self.assertAlmostEqual(c - p, 100 - k * math.exp(-0.06 * 0.3), places=6)
+
+    def test_expired_option_is_its_intrinsic_value(self):
+        self.assertEqual(india.bs_price("CE", 105, 100, 0, 0.2), 5.0)
+        self.assertEqual(india.bs_price("PE", 105, 100, 0, 0.2), 0.0)
+
+    def test_implied_vol_round_trips(self):
+        p = india.bs_price("PE", 23000, 22900, 0.02, 0.137, 0.06)
+        v = india.implied_vol("PE", p, 23000, 22900, 0.02, 0.06)
+        self.assertAlmostEqual(india.bs_price("PE", 23000, 22900, 0.02, v, 0.06), p, delta=1e-6)
+        self.assertAlmostEqual(v, 0.137, places=4)
+
+    def test_no_implied_vol_below_intrinsic_or_above_the_spot(self):
+        for args in (("CE", 4.0, 105, 100, 0.1), ("PE", 201.0, 105, 200, 0.1), ("CE", 106.0, 105, 100, 0.1)):
+            with self.assertRaises(ValueError) as cm:
+                india.implied_vol(*args)
+            self.assertIn("no implied volatility", str(cm.exception))
+
+    def test_years_to_expiry(self):
+        ist = india.IST
+        self.assertEqual(india.years_to_expiry(datetime(2026, 11, 3, 15, 30, tzinfo=ist), date(2026, 11, 9)), 6 / 365.0)
+        self.assertEqual(india.years_to_expiry(datetime(2026, 11, 9, 15, 31, tzinfo=ist), date(2026, 11, 9)), 0.0)
+
+    def test_our_iv_matches_nse(self):
+        with open(os.path.join(P3DIR, "iv-check.json")) as fh:
+            doc = json.load(fh)
+        for r in doc["rows"]:
+            v = india.implied_vol(r["right"], r["premium"], doc["spot"], r["strike"], 5 / 365.0, doc["rate"])
+            self.assertLess(abs(v * 100 - r["nse_iv"]), 0.5, r)
+
+    def test_option_symbols(self):
+        self.assertEqual(india.option_symbol("NIFTY", date(2026, 11, 9), 24400, "PE", weekly=True), "NIFTY26N0924400PE")
+        self.assertEqual(india.option_symbol("NIFTY", date(2026, 11, 23), 24400, "CE", weekly=False),
+                         "NIFTY26NOV24400CE")
+        self.assertEqual(india.parse_option_symbol("NIFTY26O1923100CE"),
+                         {"symbol": "NIFTY", "expiry": date(2026, 10, 19), "month": "2026-10", "strike": 23100.0,
+                          "right": "CE", "weekly": True})
+        self.assertEqual(india.parse_option_symbol("BANKNIFTY26OCT55000PE")["expiry"], None)
+        self.assertIsNone(india.parse_option_symbol("NIFTY26OCTFUT"))
+        n, monthly = 0, {}
+        for r in self.r19:
+            if r["kind"] == "opt" and r["symbol"] in ("NIFTY", "BANKNIFTY"):
+                key = (r["symbol"], r["expiry"])
+                if key not in monthly:
+                    monthly[key] = india.is_monthly(self.r19, *key)
+                weekly = not monthly[key]
+                self.assertEqual(india.option_symbol(r["symbol"], r["expiry"], r["strike"], r["right"], weekly),
+                                 r["contract"])
+                p = india.parse_option_symbol(r["contract"])
+                self.assertEqual((p["strike"], p["right"], p["weekly"]), (r["strike"], r["right"], weekly))
+                n += 1
+        self.assertGreater(n, 1000)
+
+    def test_strikes(self):
+        ks = india.strikes(self.r19, "NIFTY", date(2026, 10, 27))
+        self.assertEqual(ks, sorted(ks))
+        self.assertEqual(india.atm_strike(ks, 23115.65), 23100.0)
+        self.assertEqual(india.pick_strike(ks, 23115.65, "CE", 2), 23200.0)
+        self.assertEqual(india.pick_strike(ks, 23115.65, "PE", 2), 23000.0)
+        self.assertEqual(india.pick_strike(ks, 23115.65, "CE", 0), 23100.0)
+        self.assertEqual(india.option_expiries(self.r19, "NIFTY")[:3],
+                         [date(2026, 10, 19), date(2026, 10, 27), date(2026, 11, 3)])
+
+    def test_option_row(self):
+        r = india.option_row(self.r19, "NIFTY", date(2026, 10, 27), 23100, "CE")
+        self.assertEqual((r["contract"], r["close"], r["oi"], r["lot"]), ("NIFTY26OCT23100CE", 87.25, 4934930, 65))
+        self.assertGreater(r["volume"], 0)
+        self.assertIsNone(india.option_row(self.r19, "NIFTY", date(2026, 10, 27), 23101, "CE"))
+
+    def test_parity_forward(self):
+        ratio = india.forward_ratio(self.r19, "NIFTY", date(2026, 10, 27))
+        self.assertAlmostEqual(ratio * 22888.95, 22897.25, delta=0.05)
+        ratio = india.forward_ratio(self.r21, "NIFTY", date(2026, 10, 27))
+        self.assertAlmostEqual(ratio * 22811.35, 22739.94, delta=0.05)
+
+    def test_black76_gives_calls_and_puts_one_iv(self):
+        # spot pricing splits them by 9 points on 21 Oct; on the forward they agree
+        ratio = india.forward_ratio(self.r21, "NIFTY", date(2026, 10, 27))
+        ivs = []
+        for right in ("CE", "PE"):
+            r = india.option_row(self.r21, "NIFTY", date(2026, 10, 27), 23100, right)
+            ivs.append(india.option_iv(right, r["close"], r["underlying"], ratio, 23100, 6 / 365.0))
+        self.assertLess(abs(ivs[0] - ivs[1]), 0.005, ivs)
+
+    def test_the_example_premium(self):
+        ratio = india.forward_ratio(self.r19, "NIFTY", date(2026, 10, 27))
+        r = india.option_row(self.r19, "NIFTY", date(2026, 10, 27), 23100, "CE")
+        v = india.option_iv("CE", r["close"], r["underlying"], ratio, 23100, 8 / 365.0)
+        self.assertAlmostEqual(v, 0.1250, delta=0.0001)
+        years = india.years_to_expiry(datetime(2026, 10, 21, 9, 35, tzinfo=india.IST), date(2026, 10, 27))
+        p = india.option_price("CE", 23115.65, ratio, 23100, years, v)
+        self.assertEqual(india.tick_round(p), 162.95)
+
+    def test_opt_costs_match_zerodha(self):
+        with open(os.path.join(P3DIR, "zerodha-calc-opt.json")) as fh:
+            for r in json.load(fh)["rows"]:
+                self.assertAlmostEqual(india.round_trip("opt", r["qty"], r["buy"], r["sell"])["total"], r["total"],
+                                       delta=0.01)

@@ -488,3 +488,75 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+OPT_SEED19 = (0.3312, 0.4837, 0.1851, -0.097)   # target, stop, neither, avg R (premium R)
+OPT_SEED19_MEDIAN = 149.99                       # the premium at 15:15
+
+
+def _opt_plan():
+    """The P3 example plan, made the real way: bharat-entry --instrument opt, then bharat-exit."""
+    import shutil
+    import tempfile
+    from contextlib import redirect_stdout
+    entry = load("bharat-entry", "entry")
+    exitp = load("bharat-exit", "exit")
+    d, cwd = tempfile.mkdtemp(), os.getcwd()
+    os.chdir(d)
+    try:
+        with redirect_stdout(io.StringIO()):
+            assert entry.main(["check", "NIFTY", "--instrument", "opt", "--right", "CE", "--now", "2026-10-21 09:35",
+                               "--offline", os.path.join(P2, "yahoo-NSEI-5m.json"),
+                               "--bhavcopy", os.path.join(P2, "fo-bhavcopy-20261019.csv.zip"), "--write"]) == 0
+            assert exitp.main(["plan", "--now", "2026-10-21 09:36", "--stop", "or-mid", "--target", "1R",
+                               "--write"]) == 0
+        with open(os.path.join("trader", "plan.json")) as fh:
+            return json.load(fh)
+    finally:
+        os.chdir(cwd)
+        shutil.rmtree(d)
+
+
+class Options(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.raw = _opt_plan()
+        cls.doc = tm.time_machine(NSEI, tm.normalize_plan(cls.raw), NOW_FUT)
+
+    def test_it_replays_the_index_and_decides_on_the_premium(self):
+        m, o = self.doc["mc"], self.doc["opt"]
+        self.assertAlmostEqual(m["p_target"] + m["p_stop"] + m["p_neither"], 1.0, places=9)
+        self.assertEqual(self.doc["plan"]["entry"], EX.FUT_TRIGGER_CLOSE)          # the index
+        self.assertEqual((o["entry"], o["stop"], o["target"]), (EX.OPT_PREMIUM, EX.OPT_STOP, EX.OPT_TARGET))
+        # the premium decides, so the odds are not the index plan's
+        ix_raw = {k: v for k, v in self.raw.items() if k not in ("instrument",)}
+        ix_raw.update(entry=self.raw["index_entry"], stop=self.raw["index_stop"], target=self.raw["index_target"])
+        ix = tm.time_machine(NSEI, tm.normalize_plan(ix_raw), NOW_FUT)
+        self.assertNotEqual((m["p_target"], m["p_stop"]), (ix["mc"]["p_target"], ix["mc"]["p_stop"]))
+        self.assertLessEqual(o["p5_premium"], o["median_premium"])
+        self.assertLessEqual(o["median_premium"], o["p95_premium"])
+
+    def test_seed_19_numbers(self):
+        m, o = self.doc["mc"], self.doc["opt"]
+        self.assertEqual((m["p_target"], m["p_stop"], m["p_neither"], m["avg_R"]), OPT_SEED19)
+        self.assertEqual(o["median_premium"], OPT_SEED19_MEDIAN)
+
+    def test_a_higher_iv_stops_out_less(self):
+        # the same premium levels, a dearer option at every index level: further from the stop
+        raw = dict(self.raw, iv=self.raw["iv"] * 1.5)
+        hi = tm.time_machine(NSEI, tm.normalize_plan(raw), NOW_FUT)
+        self.assertLess(hi["mc"]["p_stop"], self.doc["mc"]["p_stop"])
+
+    def test_the_report_names_the_iv_and_says_it_is_held_constant(self):
+        text = "\n".join(tm.report(self.doc))
+        self.assertIn(EX.OPT_CONTRACT, text)
+        self.assertIn("implied volatility %.2f %%" % (100 * self.raw["iv"]), text)
+        self.assertIn("held constant", text)
+        self.assertIn("R = the 39.60 premium risk", text)
+
+    def test_the_history_replay_prices_each_session_on_the_premium(self):
+        h = self.doc["history"]
+        self.assertGreater(h["triggered"], 0)
+        t = h["trades"][0]
+        self.assertTrue({"premium_entry", "premium_stop", "premium_target"} <= set(t), t)
+        self.assertIn("plan's implied volatility", h["note"])
