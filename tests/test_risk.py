@@ -607,6 +607,40 @@ class Options(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("costs:", " ".join(r["reasons"]))
 
+    @staticmethod
+    def no_stop(o):
+        for k in ("stop_loss_stop_price", "stop_loss_limit_price", "take_profit_limit_price", "order_class"):
+            o.pop(k, None)
+        return o
+
+    def cheap_no_stop(self, **over):
+        return self.no_stop(opt_order(limit_price="3.00", plan={"entry": 3.0, "target": 6.0}, **over))
+
+    def test_a_cheap_option_without_a_stop_still_blocks_on_costs(self):
+        r = one([self.cheap_no_stop()], fut_cfg(require_stop=False), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK", r)
+        why = " ".join(r["reasons"])
+        self.assertIn("max_option_cost_share", why)
+        self.assertIn("Rs 195", why)
+
+    def test_enough_cheap_lots_pass_without_a_stop(self):
+        r = one([self.cheap_no_stop(qty="325")], fut_cfg(require_stop=False, max_lots=5), now=FUT_NOW)["results"][0]
+        self.assertNotIn("max_option_cost_share", " ".join(r["reasons"]))
+
+    def test_no_stop_and_no_qty_does_not_crash(self):
+        o = self.cheap_no_stop()
+        del o["qty"]
+        r = one([o], fut_cfg(require_stop=False), now=FUT_NOW)["results"][0]
+        why = " ".join(r["reasons"])
+        self.assertIn("no qty", why)
+        self.assertNotIn("max_option_cost_share", why)
+
+    def test_the_cost_check_runs_once_with_a_stop(self):
+        o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(sum("max_option_cost_share" in x for x in r["reasons"]), 1, r["reasons"])
+
     def test_a_cheap_option_blocks_whatever_the_target(self):
         o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
                       plan={"entry": 3.0, "stop": 2.0, "target": 6.0})

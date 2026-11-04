@@ -661,15 +661,6 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                         later.append("loss: %s shares x %s risk a share + %s costs = %s at the stop, over your %s "
                                      "max loss per trade" % (_num(shares), _p(risk_ps), money(cost_stop),
                                                              money(max_loss), money(cap)))
-                    opt_share = _f(c.get("max_option_cost_share"))
-                    if opt and opt_share:   # against the premium paid, which no target can change
-                        paid = shares * ref
-                        cost_in = costs(shares, ref, ref, seg)
-                        if paid > 0 and cost_in > opt_share * paid + CENT:
-                            later.append("costs: %s round-trip costs are %.0f%% of the %s premium paid, over your "
-                                         "%.0f%% max_option_cost_share: the flat Rs 20 an order eats a cheap option; "
-                                         "buy more lots or a dearer strike" % (money(cost_in), 100.0 * cost_in / paid,
-                                                                               money(paid), 100.0 * opt_share))
                     min_rr = _f(c.get("min_reward_risk"))
                     if target:
                         if (long and target <= ref + CENT) or (not long and target >= ref - CENT):
@@ -694,6 +685,16 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     elif min_rr:
                         later.append("reward:risk: no target to measure it against (min_reward_risk %s)"
                                      % _num(min_rr))
+            opt_share = _f(c.get("max_option_cost_share"))
+            if opt and opt_share and ref:   # against the premium paid: needs no stop and no target
+                n = q if q is not None else ((value or 0) / ref)
+                paid = n * ref
+                cost_in = costs(n, ref, ref, seg) if paid > 0 else 0
+                if paid > 0 and cost_in > opt_share * paid + CENT:
+                    later.append("costs: %s round-trip costs are %.0f%% of the %s premium paid, over your "
+                                 "%.0f%% max_option_cost_share: the flat Rs 20 an order eats a cheap option; "
+                                 "buy more lots or a dearer strike" % (money(cost_in), 100.0 * cost_in / paid,
+                                                                       money(paid), 100.0 * opt_share))
             daily = _f(c.get("max_daily_loss_inr"))
             if daily and max_loss is not None:
                 used = loss_today + batch_loss
