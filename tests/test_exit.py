@@ -345,3 +345,92 @@ class SkillDoc(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _opt_premium(right, index, o, at, mode):
+    import datetime as _dt
+    years = exitp.india.years_to_expiry(at, _dt.date.fromisoformat(o["expiry"]))
+    p = exitp.india.option_price(right, index, o["forward_ratio"], o["strike"], years, o["iv"], o["rate"])
+    return exitp.india.tick_round(p, mode=mode)
+
+
+class Options(unittest.TestCase):
+    setUp = Cli.setUp
+    tearDown = Cli.tearDown
+    read_plan = Cli.read_plan
+
+    def entry_opt(self, right="CE", now="2026-10-21 09:35", bhav="fo-bhavcopy-20261019.csv.zip", *extra):
+        code, text, err = run(entry, ["check", "NIFTY", "--instrument", "opt", "--right", right, "--now", now,
+                                      "--offline", os.path.join(P2, "yahoo-NSEI-5m.json"),
+                                      "--bhavcopy", os.path.join(P2, bhav), "--write"] + list(extra))
+        self.assertEqual(code, 0, text + err)
+        with open(os.path.join("trader", "entry.json")) as fh:
+            return json.load(fh)
+
+    def plan(self, *extra, now="2026-10-21 09:36"):
+        code, text, err = run(exitp, ["plan", "--now", now, "--stop", "or-mid", "--target", "1R", "--write"]
+                              + list(extra))
+        self.assertEqual(code, 0, text + err)
+        return self.read_plan(), text
+
+    def test_the_example_premiums_at_the_index_levels(self):
+        import datetime as _dt
+        e = self.entry_opt()
+        p, text = self.plan()
+        at = _dt.datetime(2026, 10, 21, 9, 35, tzinfo=exitp.india.IST)
+        self.assertEqual(p["instrument"], "opt")
+        self.assertEqual((p["index_entry"], p["index_stop"], p["index_target"]),
+                         (EX.FUT_TRIGGER_CLOSE, EX.FUT_INDEX_STOP, 23197.25))
+        self.assertEqual(p["entry"], EX.OPT_PREMIUM)
+        self.assertEqual(p["stop"], _opt_premium("CE", EX.FUT_INDEX_STOP, e["option"], at, "down"))
+        self.assertEqual(p["target"], _opt_premium("CE", 23197.25, e["option"], at, "up"))
+        self.assertEqual((p["stop"], p["target"], p["risk_per_unit"], p["risk_per_lot"]),
+                         (EX.OPT_STOP, EX.OPT_TARGET, EX.OPT_RISK_PER_UNIT, EX.OPT_RISK_PER_LOT))
+        self.assertIn("on the index", p["target_label"])
+        self.assertAlmostEqual(p["risk_per_unit"], p["entry"] - p["stop"], places=2)
+        self.assertAlmostEqual(p["risk_per_lot"], p["risk_per_unit"] * EX.OPT_LOT, places=2)
+        self.assertEqual((p["contract"], p["strike"], p["right"], p["lot"], p["expiry"]),
+                         (EX.OPT_CONTRACT, EX.OPT_STRIKE, "CE", EX.OPT_LOT, EX.OPT_EXPIRY))
+        self.assertAlmostEqual(p["iv"], EX.OPT_IV, places=4)
+        self.assertEqual(p["premium_source"], "estimated")
+        self.assertIn("index", text)
+        self.assertIn("held constant", text)
+
+    def test_a_put_stops_above_the_index_and_targets_below(self):
+        self.entry_opt("PE", "2026-10-19 12:05", "fo-bhavcopy-20261016.csv.zip")
+        p, _ = self.plan(now="2026-10-19 12:06")
+        self.assertEqual(p["index_side"], "down")
+        self.assertEqual(p["index_stop"], 23073.00)        # (23175.10 + 22970.85) / 2, rounded up for a put
+        self.assertGreater(p["index_stop"], p["index_entry"])
+        self.assertLess(p["index_target"], p["index_entry"])
+        self.assertLess(p["stop"], p["entry"])
+        self.assertGreater(p["target"], p["entry"])
+
+    def test_the_entry_flag_is_the_premium_fill(self):
+        self.entry_opt()
+        p, _ = self.plan("--entry", "170")
+        self.assertEqual((p["entry"], p["premium_source"]), (170.0, "user"))
+        self.assertGreater(p["iv"], EX.OPT_IV)            # a dearer fill is a higher implied volatility
+
+    def test_a_cheap_far_strike_clamps_the_stop_at_one_tick(self):
+        import datetime as _dt
+        at = _dt.datetime(2026, 10, 21, 9, 35, tzinfo=exitp.india.IST)
+        o = {"contract": "NIFTY26O2223600CE", "expiry": "2026-10-22", "strike": 23600.0, "right": "CE", "lot": 65,
+             "iv": 0.12, "forward_ratio": 1.0, "rate": 0.06, "premium_source": "estimated"}
+        o["premium"] = 0.30                                # a fill above one tick
+        raw = exitp.india.option_price("CE", 23034.05, 1.0, 23600, exitp.india.years_to_expiry(at, _dt.date(2026, 10, 22)), 0.12)
+        self.assertLess(raw, 0.05)                         # the case: the model prices the stop under a tick
+        c = {"entry": exitp.D("23115.65"), "stop": exitp.D("23034.05"), "target": exitp.D("23278.85")}
+        lv, notes = exitp.option_levels(c, o, at, _dt.datetime(2026, 10, 21, 15, 15, tzinfo=exitp.india.IST))
+        self.assertEqual(lv["stop"], 0.05)
+        self.assertIn("one tick", " ".join(notes))
+
+    def test_a_target_theta_eats_by_flat_by_is_refused(self):
+        import datetime as _dt
+        at = _dt.datetime(2026, 10, 21, 14, 0, tzinfo=exitp.india.IST)
+        o = {"contract": "NIFTY26O2124000CE", "expiry": "2026-10-21", "strike": 24000.0, "right": "CE", "lot": 65,
+             "iv": 0.12, "forward_ratio": 1.0, "rate": 0.06, "premium": 0.40, "premium_source": "user"}
+        c = {"entry": exitp.D("23115.65"), "stop": exitp.D("23034.05"), "target": exitp.D("23197.25")}
+        with self.assertRaises(exitp.PlanError) as cm:
+            exitp.option_levels(c, o, at, _dt.datetime(2026, 10, 21, 15, 15, tzinfo=exitp.india.IST))
+        self.assertIn("cannot reach", str(cm.exception))

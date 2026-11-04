@@ -532,7 +532,8 @@ def gather(a):
                 "or_high": a.or_high if a.or_high is not None else orr.get("high"),
                 "or_low": a.or_low if a.or_low is not None else orr.get("low"),
                 "or_minutes": orr.get("minutes") or a.or_minutes, "source": path,
-                "instrument": doc.get("instrument") or "eq", "future": doc.get("future")}
+                "instrument": doc.get("instrument") or "eq", "future": doc.get("future"),
+                "option": doc.get("option"), "index_side": doc.get("index_side") or "up"}
         if info["instrument"] == "fut" and not info["future"]:
             raise PlanError("%s is a futures entry with no future block: re-run bharat-entry --instrument fut" % path)
         if info["instrument"] == "fut":
@@ -541,6 +542,17 @@ def gather(a):
             info["entry"] = doc.get("price")  # the levels come from the index; --entry is the futures fill
             if a.entry is not None:
                 info["future"] = dict(info["future"], price=a.entry, source="user", estimated=False)
+        if info["instrument"] == "opt":
+            if not info["option"]:
+                raise PlanError("%s is an options entry with no option block: re-run bharat-entry --instrument opt"
+                                % path)
+            if doc.get("status") != "triggered":
+                raise PlanError("%s is an options entry that has not triggered: plan it once the index triggers" % path)
+            info["entry"] = doc.get("price")  # the index; --entry is the premium you paid
+            info["entry_time"] = a.time or doc.get("time")
+            info["entry_bar"] = a.entry_bar if a.entry_bar is not None else doc.get("bar_index")
+            if a.entry is not None:
+                info["option"] = dict(info["option"], premium=a.entry, premium_source="user", iv=None)
         if not info["symbol"] or info["entry"] is None:
             raise PlanError("%s has no symbol or price" % path)
     if info["interval"] not in INTERVALS:
@@ -563,6 +575,59 @@ def futures_levels(c, fut):
             "entry": float(entry_f), "stop": float(stop), "target": float(target),
             "risk_per_share": float(risk), "risk_per_unit": float(risk), "risk_per_lot": float(risk * int(fut["lot"])),
             "reward_risk": float(((target - entry_f) / risk).quantize(CENT, rounding=ROUND_HALF_UP))}
+
+
+def mirror(c, entry):
+    """A put's index levels from the long rule run on the index mirrored around the entry: the stop goes
+    above the index, the target below (2 x entry - x)."""
+    e2 = 2 * cents(entry)
+    out = dict(c, entry=cents(entry), stop=e2 - c["stop"], target=e2 - c["target"])
+    out["stop_label"] = c["stop_label"].replace("opening-range low", "opening-range high")
+    return out
+
+
+def option_levels(c, opt, at_ist, flat_ist):
+    """The index stop and target as premiums: Black-76 on the forward (index x ratio) at the entry time, with
+    the entry's implied volatility held constant. Stop ticks down (at least one tick), target ticks up.
+    Refuses a target that hitting the index target at the flat-by would not pay: the time decay eats the move."""
+    right, k, ratio, rate = opt["right"], float(opt["strike"]), float(opt["forward_ratio"]), float(opt["rate"])
+    expiry = datetime.date.fromisoformat(opt["expiry"])
+    years = india.years_to_expiry(at_ist, expiry)
+    if years <= 0:
+        raise PlanError("%s has expired at the entry time" % opt["contract"])
+    premium = float(opt["premium"])
+    iv = opt.get("iv")
+    try:
+        if iv is None:
+            iv = india.option_iv(right, premium, float(c["entry"]), ratio, k, years, rate)
+    except ValueError as e:
+        raise PlanError("%s at Rs %.2f: %s" % (opt["contract"], premium, e))
+    notes = []
+
+    def at(index, yrs):
+        return india.option_price(right, float(index), ratio, k, yrs, iv, rate)
+    stop = india.tick_round(at(c["stop"], years), mode="down")
+    if stop < 0.05:
+        stop = 0.05
+        notes.append("The model prices the premium at the index stop under one tick: the stop is clamped at Rs 0.05, "
+                     "so a stop-out can lose the whole premium.")
+    target = india.tick_round(at(c["target"], years), mode="up")
+    late = at(c["target"], india.years_to_expiry(flat_ist, expiry))
+    if late <= premium:
+        raise PlanError("%s cannot reach a profit by the flat-by: even at the index target %s at %s the model prices "
+                        "it Rs %.2f, not above the Rs %.2f premium (time decay). Pick a nearer strike or a later expiry."
+                        % (opt["contract"], num(D(c["target"])), flat_ist.strftime("%H:%M"), late, premium))
+    if stop >= premium:
+        raise PlanError("the premium stop %.2f is not under the premium %.2f" % (stop, premium))
+    risk = round(premium - stop, 2)
+    lot = int(opt["lot"])
+    return {"instrument": "opt", "contract": opt["contract"], "expiry": opt["expiry"], "strike": k, "right": right,
+            "lot": lot, "iv": round(iv, 6), "forward_ratio": ratio, "rate": rate,
+            "premium_source": opt.get("premium_source") or "estimated", "oi": opt.get("oi"),
+            "volume": opt.get("volume"), "illiquid": bool(opt.get("illiquid")), "bhav_date": opt.get("bhav_date"),
+            "index_entry": float(c["entry"]), "index_stop": float(c["stop"]), "index_target": float(c["target"]),
+            "entry": premium, "stop": stop, "target": target, "risk_per_share": risk, "risk_per_unit": risk,
+            "risk_per_lot": round(risk * lot, 2), "reward_risk": round((target - premium) / risk, 2)}, notes
 
 
 def build_plan(a, now_utc):
@@ -593,8 +658,20 @@ def build_plan(a, now_utc):
             raise PlanError("an atr stop needs at least 3 closed %s bars of %s on %s by the entry; found %d"
                             % (info["interval"], info["symbol"], day, len(bars)))
         atr, atr_n = atr_of(bars)
-    c = compute(info["entry"], stop_rule, stop_param, target_rule, target_param, info["or_high"], info["or_low"],
-                atr, atr_n)
+    down = info.get("instrument") == "opt" and info.get("index_side") == "down"
+    if down:  # a bought put: run the long rule on the index mirrored around the entry
+        e2 = 2 * float(info["entry"])
+        if stop_rule == "price":
+            stop_param = D(repr(e2)) - stop_param
+        if target_rule == "price":
+            target_param = D(repr(e2)) - target_param
+        c = compute(info["entry"], stop_rule, stop_param, target_rule, target_param,
+                    e2 - info["or_low"] if info["or_low"] is not None else None,
+                    e2 - info["or_high"] if info["or_high"] is not None else None, atr, atr_n)
+        c = mirror(c, info["entry"])
+    else:
+        c = compute(info["entry"], stop_rule, stop_param, target_rule, target_param, info["or_high"], info["or_low"],
+                    atr, atr_n)
     flat_by, flat_note = resolve_flat_by(day, a.flat_by, cfg, entry_time)
     orr = None
     if info["or_high"] is not None and info["or_low"] is not None:
@@ -610,10 +687,18 @@ def build_plan(a, now_utc):
             "stop_detail": c["stop_detail"], "created_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"), "note": NOTE}
     if info.get("instrument") == "fut":
         plan.update(futures_levels(c, info["future"]))
+    opt_notes = []
+    if info.get("instrument") == "opt":
+        if not entry_time:
+            raise PlanError("an options plan needs the entry time (the option's time to expiry starts there)")
+        at_ist = datetime.datetime.combine(day, entry_time, india.IST)
+        flat_ist = datetime.datetime.combine(day, parse_hhmm(flat_by, "flat_by"), india.IST)
+        lv, opt_notes = option_levels(c, info["option"], at_ist, flat_ist)
+        plan.update(lv, index_side=info.get("index_side") or "up", target_label=plan["target_label"] + " on the index")
     if atr is not None:
         plan["atr"] = round(atr, 4)
         plan["atr_bars"] = atr_n
-    warnings = []
+    warnings = list(opt_notes)
     if flat_note:
         warnings.append("Flat-by %s: %s." % (flat_by, flat_note))
     mrr = cfg.get("min_reward_risk")
@@ -646,7 +731,21 @@ def describe(plan):
     out.append("  Stop          %s  %s%s" % (money(plan["stop"]), plan["stop_label"],
                                              (": " + plan["stop_detail"]) if plan.get("stop_detail") else ""))
     out.append("  Target        %s  %s" % (money(plan["target"]), plan["target_label"]))
-    if plan.get("instrument") == "fut":
+    if plan.get("instrument") == "opt":
+        out[0] = out[0].replace(" long,", " option buy,")
+        out.insert(1, "  Contract      buy %s (%s %g, expires %s, lot %d). The signal and the levels come from the index: "
+                      "entry %s, stop %s, target %s; the premiums are Black-76 on the forward (index x %.6f) with "
+                      "implied volatility %.2f%% held constant%s" % (
+                          plan["contract"], "call" if plan["right"] == "CE" else "put", plan["strike"], plan["expiry"],
+                          plan["lot"], num(D(plan["index_entry"])), num(D(plan["index_stop"])),
+                          num(D(plan["index_target"])), plan["forward_ratio"], 100 * plan["iv"],
+                          "" if plan["premium_source"] == "user" else ", from an ESTIMATED premium"))
+        out.append("  Risk a unit   %s of premium (%s%% of it); Risk a lot %s" % (
+            money(plan["risk_per_unit"]), pct, money(plan["risk_per_lot"])))
+        if plan["premium_source"] != "user":
+            out.append("  The premium is estimated from the last bhavcopy: read the live premium on Kite and give it "
+                       "with --entry; bharat-risk blocks an entry on the estimate.")
+    elif plan.get("instrument") == "fut":
         ix = plan["index"]
         out.insert(1, "  Contract      %s, expires %s, lot %d; the signal and the levels come from the index "
                       "(entry %s, stop %s, target %s) x basis %.6f from %s%s" % (
