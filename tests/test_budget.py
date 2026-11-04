@@ -17,7 +17,7 @@ TODAY = "2026-10-19"
 CONFIG_KEYS = {
     "budget": 200000, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_inr": 200000, "min_order_inr": 500,
     "max_loss_per_trade_inr": 1000, "max_daily_loss_inr": 3000, "max_trades_per_day": 3, "max_orders_per_day": 10,
-    "min_reward_risk": 1.0, "max_cost_share": 0.25, "require_stop": True,
+    "min_reward_risk": 1.0, "max_cost_share": 0.25, "max_option_cost_share": 0.10, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "broker": "zerodha", "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False,
     "allow_short": False, "margin_per_lot_inr": {}, "max_lots": 1,

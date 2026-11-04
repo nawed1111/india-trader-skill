@@ -219,14 +219,19 @@ The same session as the futures example: NIFTY, 2026-10-21.
    loss at the stop is 65 x 39.60 + 67.02 = Rs 2,641.02. The order is always
    a limit buy at the premium on NFO, MIS.
 5. **`/bharat-risk`** blocks any opening sell ("option selling is not part of
-   this pack"), a market order, an estimated premium (options move too fast
-   for an end-of-day price), open interest under `min_option_oi`, a new
-   entry on expiry day after `expiry_day_cutoff` (13:00), and costs that eat
-   the reward: a Rs 3 option bought for 1 lot pays Rs 40 of brokerage on a
-   Rs 195 position.
+   this pack"), a market order (closing one too: an option is bought and
+   sold at a limit), an order not on NFO, an estimated premium (options move
+   too fast for an end-of-day price), open interest under `min_option_oi`, a
+   new entry on expiry day after `expiry_day_cutoff` (13:00), an expiry that
+   disagrees with the date in a weekly contract's name, and costs over
+   `max_option_cost_share` (10 %) of the premium paid, whatever the target:
+   a Rs 3 option bought for 1 lot pays about Rs 47 on a Rs 195 position. An
+   F&O order over NSE's freeze limit (NIFTY 1,800 units, 27 lots; BANKNIFTY
+   900) blocks too: send it as several tickets.
 6. **`/bharat-broker`** sends a LIMIT buy, then an SL stop-limit (NSE takes no
    SL-M on options) 10 ticks under the trigger; a stop-limit may not fill in
-   a fast move. Flattening an option is always a limit sell.
+   a fast move. Flattening an option is always a limit sell, rounded down
+   to the 0.05 tick.
 7. **`/bharat-alerts`** watches the index levels the model ties to the
    premium stop and target, and says so in every message, and rings at
    15:00 on expiry day: an ITM option held to expiry pays

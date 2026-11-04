@@ -188,6 +188,10 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 - **short** any sell that opens or adds to a short option blocks, whatever
   the config says: option selling is not part of this pack. Selling an
   option you hold is an exit.
+- **format** an F&O order not on `exchange: NFO` blocks, and so does a
+  market order on an option, entry or exit: an option is closed at a limit
+  too (`ticket.py flatten --symbol C --limit PRICE`). This is a format
+  rule, and a limit sell still gets you out.
 - **entry** anything but a limit order blocks, and so does a stop leg
   without `stop_loss_limit_price` (NSE takes no SL-M on options). An NFO
   name the pack cannot read as a future or an option, with no
@@ -197,15 +201,23 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 - **liquidity** open interest under `min_option_oi`, or no trades in the
   last bhavcopy, blocks.
 - **expiry** an expired contract, a missing expiry, or a new entry on
-  expiry day at or after `expiry_day_cutoff` (default 13:00) blocks.
-- **costs** use Zerodha's option charges; the cost-share check catches a
-  cheap option (Rs 40 of brokerage alone on a Rs 195 position).
+  expiry day at or after `expiry_day_cutoff` (default 13:00) blocks. A
+  weekly name carries its date (`NIFTY26O2023100CE` expires 20 Oct), and
+  that date wins: an order whose `expiry` disagrees blocks. A monthly name
+  gives the month only, so the order's expiry must be in that month.
+- **freeze** an F&O order over NSE's per-order limit (NIFTY 1,800 units,
+  BANKNIFTY 900) blocks, exits too: send it as several tickets.
+- **costs** use Zerodha's option charges. Round-trip costs over
+  `max_option_cost_share` (default 0.10) of the premium paid block, whatever
+  the target: 1 lot of a Rs 3 option pays about Rs 47 on Rs 195 (24 %);
+  5 lots pay Rs 49 on Rs 975 (5 %).
 - **lots** more than `max_lots`; `max_premium_inr` caps the premium.
 
 ## What it never does
 
 It never places an order, never edits an order to make it pass, never
-loosens a limit, never blocks a sell that only gets the user out, and never
+loosens a limit, never blocks a sell that only gets the user out (an option's close must be
+a limit order, which still gets them out), and never
 treats a PASS as the user's yes.
 
 ## Safety

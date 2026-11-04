@@ -16,7 +16,9 @@ a limit together are caught.
 Entries and exits. An ENTRY opens or adds to a position (a buy, or a sell
 that would go short). An EXIT only reduces what you hold. Getting out must
 always be possible: an exit is checked for format, asset and short sales
-only; every other rule turns into a warning for it.
+only; every other rule turns into a warning for it. An F&O order must be on
+NFO, and an option is closed at a limit, never market: both are format
+rules, and a limit sell still gets you out.
 
 What blocks an order (every order):
 
@@ -82,7 +84,7 @@ DEFAULTS = {
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False, "allow_short": False,
     "margin_per_lot_inr": {}, "max_lots": 1, "max_premium_inr": None, "min_option_oi": 50000,
-    "expiry_day_cutoff": "13:00",
+    "expiry_day_cutoff": "13:00", "max_option_cost_share": 0.10,
 }
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 FUT_NAME = re.compile(r"^([A-Z&\-]+)(\d{2})([A-Z]{3})FUT$")
@@ -94,7 +96,6 @@ PRICE_FIELDS = ("qty", "notional", "limit_price", "stop_price", "take_profit_lim
                 "stop_loss_stop_price", "stop_loss_limit_price")
 TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
 TIFS = {"day", "gtc", "opg", "cls", "ioc", "fok"}
-OPT_SYM = re.compile(r"^[A-Z&\-]+\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
 FNO = re.compile(r"^[A-Z&\-]+\d{2}([A-Z]{3}FUT|[A-Z0-9]{3}\d+(CE|PE))$")
 SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,19}$")
 NEAR_BAND = 0.01
@@ -348,10 +349,11 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         bracket = oc == "bracket" or (not oc and legs)
         value = None
         fno = o.get("instrument") in ("fut", "opt") or str(o.get("exchange") or "").upper() == "NFO"
-        opt = o.get("instrument") == "opt" or bool(OPT_SYM.match(sym))
-        fno = fno or opt
+        name = india.parse_option_symbol(sym)
+        opt = o.get("instrument") == "opt" or name is not None
+        fno = fno or opt or bool(FUT_NAME.match(sym))
         fut = fno and not opt
-        unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or OPT_SYM.match(sym))
+        unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or name)
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
@@ -404,6 +406,13 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         elif oc or o.get("advanced_instructions"):
             warns.append("advanced order (%s): check every leg before you say yes"
                          % (oc or "advanced_instructions"))
+
+        exch = str(o.get("exchange") or "").strip().upper()
+        if (fut or opt) and exch != "NFO":
+            reasons.append("format: %s is an F&O contract and goes on NFO, not %s" % (sym, exch or "no exchange"))
+        if opt and typ == "market":   # format, so an exit blocks too: a limit sell still gets you out
+            reasons.append("format: an option is bought and sold at a limit, never market (a market order can fill "
+                           "far from its value); to close it: ticket.py flatten --symbol %s --limit PRICE" % sym)
 
         # asset
         if unknown_nfo:   # fail closed: an F&O order this pack cannot classify skips no checks by default
@@ -458,6 +467,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         elif side == "buy" and held < -1e-9 and q is not None:
             exiting = q <= -held + 1e-9
         kind = "exit" if exiting else "entry"
+        if fno and q:   # in reasons, so an exit blocks too: the exchange would reject it anyway
+            und = name["symbol"] if name else (FUT_NAME.match(sym).group(1) if FUT_NAME.match(sym)
+                                               else str(o.get("underlying") or "").upper())
+            cap_q = india.FREEZE_QTY.get(und)
+            if cap_q and q > cap_q:
+                per = (cap_q // lot) * lot if lot else cap_q   # a ticket is whole lots
+                reasons.append("freeze: %s units is over NSE's %s-unit limit for one %s order; send it as %d tickets "
+                               "of at most %s" % (_num(q), format(cap_q, ","), und, -(-int(q) // per),
+                                                  format(per, ",")))
         product = str(o.get("product") or "MIS").strip().upper()
         if lot_missing:
             later.append(lot_missing)
@@ -495,7 +513,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if side == "sell":
                 reasons.append("short: option selling is not part of this pack (a written option's loss has no cap); "
                                "it only buys calls and puts. If you hold this option, record the fill first")
-            if typ != "limit":
+            if typ not in ("limit", "market"):   # market is a format block above
                 later.append("entry: an option entry is a limit order at the premium; a market order on an option "
                              "can fill far from its fair value")
             if o.get("stop_loss_stop_price") is not None and o.get("stop_loss_limit_price") is None:
@@ -514,6 +532,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 later.append("liquidity: %s is marked illiquid (no trades in the last bhavcopy, or low open interest)"
                              % sym)
             exp = str(o.get("expiry") or "")
+            if name and name["expiry"]:   # a weekly name carries its date: it wins over the order's
+                named = name["expiry"].isoformat()
+                if exp and exp != named:
+                    later.append("expiry: the order says %s but %s expires on %s (the date is in its name)"
+                                 % (exp, sym, named))
+                exp = named
+            elif name and exp and exp[:7] != name["month"]:
+                # ponytail: a monthly name gives the month only; checking it is that month's last expiry needs the bhavcopy
+                later.append("expiry: the order says %s but %s is a %s contract" % (exp, sym, name["month"]))
             if not exp:
                 later.append("expiry: the option entry has no expiry date (bharat-budget writes it)")
             elif exp < today:
@@ -630,6 +657,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                         later.append("loss: %s shares x %s risk a share + %s costs = %s at the stop, over your %s "
                                      "max loss per trade" % (_num(shares), _p(risk_ps), money(cost_stop),
                                                              money(max_loss), money(cap)))
+                    opt_share = _f(c.get("max_option_cost_share"))
+                    if opt and opt_share:   # against the premium paid, which no target can change
+                        paid = shares * ref
+                        cost_in = costs(shares, ref, ref, seg)
+                        if paid > 0 and cost_in > opt_share * paid + CENT:
+                            later.append("costs: %s round-trip costs are %.0f%% of the %s premium paid, over your "
+                                         "%.0f%% max_option_cost_share: the flat Rs 20 an order eats a cheap option; "
+                                         "buy more lots or a dearer strike" % (money(cost_in), 100.0 * cost_in / paid,
+                                                                               money(paid), 100.0 * opt_share))
                     min_rr = _f(c.get("min_reward_risk"))
                     if target:
                         if (long and target <= ref + CENT) or (not long and target >= ref - CENT):

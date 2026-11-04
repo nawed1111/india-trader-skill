@@ -258,6 +258,28 @@ class Futures(unittest.TestCase):
         self.assertIn("costs Rs 894.53 at the stop", info)
         self.assertIn("margin Rs 1,75,953 for 1 lot", info)
 
+    def test_a_future_off_nfo_blocks(self):
+        r = one([fut_order(exchange="NSE")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("goes on NFO", " ".join(r["reasons"]))
+
+    def test_a_future_over_the_freeze_limit_blocks(self):
+        o = fut_order(symbol="BANKNIFTY26OCTFUT", underlying="BANKNIFTY", lot=30, qty="930")
+        r = one([o], fut_cfg(max_lots=40), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("900-unit limit for one BANKNIFTY order", " ".join(r["reasons"]))
+
+    def test_a_futures_name_alone_is_f_and_o(self):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65, "lots": []}]}
+        sell = {"symbol": EX.FUT_CONTRACT, "side": "sell", "qty": "65", "type": "market"}
+        r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertIn("goes on NFO", " ".join(r["reasons"]))
+
+    def test_freeze_tickets_are_whole_lots(self):
+        r = one([opt_order(qty="3575")], fut_cfg(max_lots=60), now=FUT_NOW)["results"][0]
+        self.assertIn("3 tickets of at most 1,755", " ".join(r["reasons"]), r)
+
     def test_fno_off_blocks(self):
         r = one([fut_order()], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
@@ -464,6 +486,61 @@ class Options(unittest.TestCase):
         r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
         self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
 
+    def exit_sell(self, **over):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.OPT_CONTRACT, "shares": 65, "lots": []}]}
+        sell = {"symbol": EX.OPT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+        sell.update(over)
+        return one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+
+    def test_closing_an_option_at_market_blocks(self):
+        r = self.exit_sell(type="market", limit_price=None)
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertIn("flatten --symbol", " ".join(r["reasons"]))
+        self.assertIn("--limit", " ".join(r["reasons"]))
+
+    def test_an_option_off_nfo_blocks(self):
+        r = one([opt_order(exchange="NSE")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("NFO", " ".join(r["reasons"]))
+        o = opt_order()
+        del o["exchange"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("no exchange", " ".join(r["reasons"]))
+        r = self.exit_sell(exchange="NSE")
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+
+    def test_a_weekly_name_sets_the_expiry(self):
+        r = one([opt_order(symbol="NIFTY26O2023100CE", expiry="2026-10-27")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        why = " ".join(r["reasons"])
+        self.assertIn("2026-10-20", why)
+        self.assertIn("2026-10-27", why)
+        r = one([opt_order(symbol="NIFTY26O2723100CE", expiry="2026-10-27")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertNotIn("expiry:", " ".join(r["reasons"]), r)
+
+    def test_a_weekly_expiring_today_from_its_name(self):
+        o = opt_order(symbol="NIFTY26O2123100CE", expiry=None)
+        r = one([o], fut_cfg(), now="2026-10-21 13:05")["results"][0]
+        why = " ".join(r["reasons"])
+        self.assertIn("expiry_day_cutoff", why)
+        self.assertNotIn("no expiry date", why)
+
+    def test_a_monthly_name_checks_the_month(self):
+        r = one([opt_order(expiry="2026-11-24")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("a 2026-10 contract", " ".join(r["reasons"]))
+
+    def test_over_the_freeze_limit_blocks(self):
+        r = one([opt_order(qty="1820")], fut_cfg(max_lots=30), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        why = " ".join(r["reasons"])
+        self.assertIn("1,800", why)
+        self.assertIn("2 tickets", why)
+        r = one([opt_order(qty="1755")], fut_cfg(max_lots=30), now=FUT_NOW)["results"][0]
+        self.assertNotIn("freeze:", " ".join(r["reasons"]))
+
     def test_a_market_order_blocks(self):
         o = opt_order(type="market")
         del o["limit_price"]
@@ -494,6 +571,21 @@ class Options(unittest.TestCase):
         r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("costs:", " ".join(r["reasons"]))
+
+    def test_a_cheap_option_blocks_whatever_the_target(self):
+        o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        why = " ".join(r["reasons"])
+        self.assertIn("max_option_cost_share", why)
+        self.assertIn("Rs 195", why)
+
+    def test_enough_cheap_lots_pass_the_premium_cost_check(self):
+        o = opt_order(qty="325", limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(max_lots=5), now=FUT_NOW)["results"][0]
+        self.assertNotIn("max_option_cost_share", " ".join(r["reasons"]), r)
 
     def test_option_fields_are_in_the_fingerprint(self):
         o = opt_order()

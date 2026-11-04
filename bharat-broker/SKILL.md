@@ -130,7 +130,8 @@ premium on NFO; the stop is SL (NSE takes no SL-M on options) with its
 limit from the order (`stop_loss_limit_price`), and the ticket says a
 stop-limit may not fill in a fast move. Paper fills pay the premium and
 Zerodha's option charges. `flatten` an option needs `--limit PRICE`: never
-a market sell.
+a market sell. A limit off NSE's 0.05 tick is rounded down (150.03 goes
+at 150.00), and the ticket says so.
 
 The target is an alert (`/bharat-alerts`). Taking it is a new sell ticket
 (through bharat-risk and a new yes), after cancelling the open SL-M stop.

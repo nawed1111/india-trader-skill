@@ -734,8 +734,10 @@ def cmd_flatten(a):
              "qty": _str_num(qty), "type": "limit" if a.limit is not None else "market", "time_in_force": "day",
              "why": "flat by %s IST: closes the %s intraday trade before the broker's 15:20 square-off "
                     "(qty from %s)" % (flat_by, sym, source)}
-    if a.limit is not None:
-        order["limit_price"] = _p(a.limit)
+    lim = None
+    if a.limit is not None:   # NSE rejects an off-tick price; down, so the sell that gets you out fills
+        lim = india.tick_round(_f(a.limit), mode="down")
+        order["limit_price"] = _p(lim)
     if seg != SEGMENT:
         order["instrument"] = seg
         if mine and plan.get("lot"):
@@ -747,6 +749,8 @@ def cmd_flatten(a):
            "note": "Flatten ticket. Nothing is placed until bharat-risk passes it and you say yes in the chat.",
            "source": "ticket.py flatten %s on %s" % (sym, today), "orders": [order]}
     write_json(a.orders, doc)
+    if lim is not None and abs(lim - _f(a.limit)) > 1e-9:
+        print("--limit %s is off NSE's 0.05 tick: the sell goes at %s." % (a.limit, _p(lim)))
     print("Flatten %s: %s (flat by %s IST)." % (sym, plain(order), flat_by))
     print("Wrote it to %s%s." % (a.orders, (" (it replaced %d earlier proposal%s)"
                                              % (replaced, "" if replaced == 1 else "s")) if replaced else ""))
