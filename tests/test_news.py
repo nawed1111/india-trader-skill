@@ -121,6 +121,13 @@ class Check(unittest.TestCase):
         self.assertNotIn("2026-10-21", out)          # filed after the pinned clock
         self.assertIn("Checked 2026-10-19 09:30 IST", out)
 
+    def test_a_now_without_a_zone_is_ist(self):
+        # as in every other bharat-* tool: 9:30 with no offset is 9:30 IST, 04:00 UTC
+        code, out, err = run(["--tickers", "RELIANCE", "--hours", "48", "--no-moves", "--json",
+                              "--now", "2026-10-19 09:30"] + self.base[:4])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["checked"], "2026-10-19T04:00:00+00:00")
+
     def test_nse_blocked_keeps_the_headlines(self):
         class Blocked(news.Fetcher):
             def get(self, url, name, nse=False):

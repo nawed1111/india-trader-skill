@@ -78,6 +78,15 @@ class Fetcher(object):
             raise InsiderError(str(e))          # names the URL
 
 
+def parse_now(text):
+    """--now -> aware UTC. A time without an offset is IST, as in every bharat-* tool."""
+    try:
+        d = _dt.datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise InsiderError('--now wants a time like "2026-11-04 08:30" (IST) or ...Z (UTC), not %r' % text)
+    return india.ist_to_utc(d)
+
+
 def _json(data, what):
     try:
         return json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
@@ -247,7 +256,7 @@ def main(argv=None):
     p.add_argument("--plan", default="trader/plan.json")
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--state", default="trader/state/insider.json")
-    p.add_argument("--now", help="ISO time, for reproducible runs")
+    p.add_argument("--now", help='pretend it is this time ("2026-11-04 08:30" IST, or ISO with an offset)')
     p.add_argument("--dry-run", action="store_true", help="do not update the state file")
     for sp in sub.choices.values():
         sp.add_argument("--offline", metavar="DIR")
@@ -300,8 +309,11 @@ def main(argv=None):
     if not symbols:
         print("insider.py: no symbols. Pass --symbols, or run /bharat-scanner first.", file=sys.stderr)
         return 2
-    now = _dt.datetime.fromisoformat(a.now.replace("Z", "+00:00")) if a.now else \
-        _dt.datetime.now(_dt.timezone.utc)
+    try:
+        now = parse_now(a.now) if a.now else _dt.datetime.now(_dt.timezone.utc)
+    except InsiderError as e:
+        print("insider.py: %s" % e, file=sys.stderr)
+        return 1
     state = load_json(a.state) or {}
     seen = state.get("seen", {})
     errors = []
