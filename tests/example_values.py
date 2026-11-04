@@ -51,3 +51,16 @@ FUT_MAX_LOSS_LIMIT = 7000      # the futures example's max loss per trade
 FUT_LOTS = 1
 FUT_COSTS_AT_STOP = 894.53
 FUT_MAX_LOSS = 6201.78         # 65 x 81.65 + 894.53
+
+# P3: index options, the same 21 Oct 2026 session (docs/p0-findings.md, P3 findings)
+OPT_SYMBOL = "NIFTY"
+OPT_DATE = "2026-10-21"
+OPT_CONTRACT = "NIFTY26OCT23100CE"   # ATM of 23115.65, the 27 Oct monthly
+OPT_STRIKE = 23100.0
+OPT_EXPIRY = "2026-10-27"
+OPT_LOT = 65
+OPT_BHAV_DATE = "2026-10-19"
+OPT_BHAV_CLOSE = 87.25               # the 19 Oct close, at index 22888.95
+OPT_OI = 4934930
+OPT_IV = 0.1250                      # Black-76 on the parity forward (19 Oct, ratio 1.000362), to 4 dp
+OPT_PREMIUM = 162.95                 # the call at the 9:35 trigger, estimated

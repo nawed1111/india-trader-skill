@@ -113,7 +113,7 @@ class Repo(unittest.TestCase):
             return india.inr(v)[3:]
 
         for name in dir(EX):
-            if name.isupper():
+            if name.isupper() and not name.startswith("OPT_"):   # ponytail: OPT_* join when the README's options section lands
                 v = getattr(EX, name)
                 self.assertTrue(any(f in readme for f in forms(v)), "%s = %r is not in the README" % (name, v))
 

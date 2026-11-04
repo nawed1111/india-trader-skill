@@ -189,7 +189,8 @@ Same session as P2: **NIFTY, 21 Oct 2026**, ORB trigger at 9:35 on the index at 
 - Time to expiry at the trigger: 8,995 minutes (21 Oct 9:35 to 27 Oct 15:30) = 0.017114 years.
 - Spot Black-Scholes (the plan as written): IV 11.92 % from 87.25 with 8 days left, premium at the trigger
   **164.25**.
-- Black-76 on the parity forward: IV 12.56 %, forward 23121.96, premium **162.55**.
+- Black-76 on the future's basis: IV 12.56 %, forward 23121.96, premium 162.55. On the parity forward (the model
+  chosen, ratio 1.000362 from the 19 Oct ATM pair): IV **12.50 %**, premium **162.95**.
 - That day the option closed at 50.05 (the index fell to 22811.35 by the close): the bought call lost.
 
 ## What this changes in the plan (for review)

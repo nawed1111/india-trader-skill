@@ -652,3 +652,79 @@ class FuturesDeferred(unittest.TestCase):
             self.assertEqual(f["contract"], "NIFTY27JANFUT", day)
             self.assertNotIn("rolls over", " ".join(f["warnings"]), day)
 
+
+
+class Options(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.d)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.d)
+
+    def opt(self, *extra, now="2026-10-21 09:35", bhav=BHAV19):
+        return run(["check", "NIFTY", "--instrument", "opt", "--offline", NSEI, "--now", now, "--bhavcopy", bhav,
+                    "--write"] + list(extra))
+
+    def entry(self):
+        with open(os.path.join("trader", "entry.json")) as fh:
+            return json.load(fh)
+
+    def test_the_example_atm_call_and_its_estimated_premium(self):
+        code, text, err = self.opt("--right", "CE")
+        self.assertEqual(code, 0, text + err)
+        e = self.entry()
+        self.assertEqual((e["instrument"], e["price"]), ("opt", EX.FUT_TRIGGER_CLOSE))  # the signal is the index
+        o = e["option"]
+        self.assertEqual((o["contract"], o["strike"], o["right"], o["expiry"], o["lot"], o["oi"]),
+                         (EX.OPT_CONTRACT, EX.OPT_STRIKE, "CE", EX.OPT_EXPIRY, EX.OPT_LOT, EX.OPT_OI))
+        self.assertEqual((o["premium"], o["premium_source"], o["bhav_date"]), (EX.OPT_PREMIUM, "estimated", "2026-10-19"))
+        self.assertAlmostEqual(o["iv"], EX.OPT_IV, places=4)
+        self.assertIn(EX.OPT_CONTRACT, text)
+        self.assertIn("estimated", text)
+        self.assertIn("implied volatility", text)
+
+    def test_a_given_premium_sets_the_iv(self):
+        code, text, err = self.opt("--right", "CE", "--premium", "170")
+        self.assertEqual(code, 0, text + err)
+        o = self.entry()["option"]
+        self.assertEqual((o["premium"], o["premium_source"]), (170.0, "user"))
+        self.assertGreater(o["iv"], EX.OPT_IV)
+
+    def test_steps_otm(self):
+        self.opt("--right", "CE", "--steps-otm", "2")
+        self.assertEqual(self.entry()["option"]["strike"], 23200.0)
+
+    def test_a_put_triggers_on_the_first_close_under_the_range_low(self):
+        code, text, err = self.opt("--right", "PE", now="2026-10-19 12:05", bhav=BHAV16)
+        self.assertEqual(code, 0, text + err)
+        e = self.entry()
+        low = e["opening_range"]["low"]
+        self.assertLess(e["price"], low)
+        self.assertEqual(e["index_side"], "down")
+        self.assertIn("below the range low", text)
+        # no earlier closed bar after the range was under the low
+        ch = entry.get_chart("NIFTY", "5m", datetime.date(2026, 10, 19), NSEI, datetime.date(2026, 10, 19))
+        res = entry.evaluate(ch, entry.parse_now("2026-10-19 12:05"), below=True)
+        first = [b for b in res["_bars"] if b["slot"] >= 3 and b["c"] < low][0]
+        self.assertEqual(res["trigger"]["bar_index"], first["slot"])
+        self.assertEqual(e["option"]["right"], "PE")
+
+    def test_an_illiquid_strike_warns(self):
+        with open("cfg.json", "w") as fh:
+            json.dump({"min_option_oi": 10 ** 9}, fh)
+        code, text, _ = self.opt("--right", "CE", "--config", "cfg.json")
+        self.assertIn("open interest", text)
+        self.assertTrue(self.entry()["option"]["illiquid"])
+
+    def test_the_option_flags_are_checked(self):
+        code, _, err = self.opt()
+        self.assertEqual(code, 1)
+        self.assertIn("--right CE or PE", err)
+        code, _, err = run(["check", "NIFTY", "--offline", NSEI, "--now", "2026-10-21 09:35", "--right", "CE"])
+        self.assertIn("--instrument opt", err)
+        code, _, err = run(["check", "RELIANCE", "--instrument", "opt", "--right", "CE", "--offline", REL,
+                            "--now", "2026-10-19 09:50", "--bhavcopy", BHAV19])
+        self.assertIn("NIFTY or BANKNIFTY", err)

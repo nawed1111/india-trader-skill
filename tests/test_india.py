@@ -307,10 +307,10 @@ class OptionsMath(unittest.TestCase):
         ratio = india.forward_ratio(self.r19, "NIFTY", date(2026, 10, 27))
         r = india.option_row(self.r19, "NIFTY", date(2026, 10, 27), 23100, "CE")
         v = india.option_iv("CE", r["close"], r["underlying"], ratio, 23100, 8 / 365.0)
-        self.assertAlmostEqual(v, 0.1256, delta=0.0006)
+        self.assertAlmostEqual(v, 0.1250, delta=0.0001)
         years = india.years_to_expiry(datetime(2026, 10, 21, 9, 35, tzinfo=india.IST), date(2026, 10, 27))
         p = india.option_price("CE", 23115.65, ratio, 23100, years, v)
-        self.assertAlmostEqual(p, 162.5, delta=0.5)
+        self.assertEqual(india.tick_round(p), 162.95)
 
     def test_opt_costs_match_zerodha(self):
         with open(os.path.join(P3DIR, "zerodha-calc-opt.json")) as fh:
