@@ -126,7 +126,9 @@ class KiteKeyFile(unittest.TestCase):
         note, env = self.example()
         for k in ("KITE_API_KEY", "KITE_API_SECRET"):
             self.assertIn("NEVER_IN_CHAT", env[k])
-        self.assertEqual(env["EXCLUDED_TOOLS"], "place_order,modify_order,cancel_order")
+        self.assertEqual(set(env["EXCLUDED_TOOLS"].split(",")),   # GTT orders are orders too
+                         {"place_order", "modify_order", "cancel_order", "place_gtt_order", "modify_gtt_order",
+                          "delete_gtt_order"})
         for words in ("self-hosted", "static IP", "Needs approval", "APP_MODE=http",
                       "http://127.0.0.1:8080/callback", "never stdio"):
             self.assertIn(words, note)

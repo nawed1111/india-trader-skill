@@ -91,9 +91,12 @@ class SetupScript(unittest.TestCase):
         # placeholder keys and the order tools off, in a file only you can read
         self.assertEqual(stat.S_IMODE(os.stat(self.keys).st_mode), 0o600)
         lines = self.key_file()
-        for line in ("KITE_API_KEY=PASTE_KEY_LATER", "KITE_API_SECRET=PASTE_SECRET_LATER",
-                     "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"):
+        for line in ("KITE_API_KEY=PASTE_KEY_LATER", "KITE_API_SECRET=PASTE_SECRET_LATER"):
             self.assertIn(line, lines)
+        # every order tool that asks in Claude is also off at the server, GTT orders included
+        excluded = set(next(x for x in lines if x.startswith("EXCLUDED_TOOLS=")).split("=", 1)[1].split(","))
+        self.assertLessEqual({"place_order", "modify_order", "cancel_order", "place_gtt_order"}, excluded)
+        self.assertEqual({t.replace("mcp__kite__", "") for t in self.ask_rules()} - excluded, set())
         # one copy, HTTP mode on loopback, started at login and restarted if it stops
         plist_path = os.path.join(self.home, "Library", "LaunchAgents", "local.kite-mcp-server.plist")
         with open(plist_path, "rb") as fh:
@@ -138,11 +141,15 @@ class SetupScript(unittest.TestCase):
         with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
             settings = json.load(fh)
         self.assertEqual((settings["model"], settings["permissions"]["allow"]), ("opus", ["Bash(ls)"]))
-        # a second run keeps the key file you edited and adds no duplicate rules
-        with open(self.keys, "a") as fh:
-            fh.write("EXCLUDED_TOOLS=place_order\n")
-        self.assertEqual(self.run_script(self.target).returncode, 0)
-        self.assertIn("EXCLUDED_TOOLS=place_order", self.key_file())
+        # a second run keeps the key file you edited and adds no duplicate rules; an older line
+        # without the GTT tools is kept as it is, with a note
+        old_line = "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"
+        with open(self.keys, "w") as fh:
+            fh.write("\n".join([x for x in lines if not x.startswith("EXCLUDED_TOOLS")] + [old_line]) + "\n")
+        r = self.run_script(self.target)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(old_line, self.key_file())
+        self.assertIn("place_gtt_order", r.stdout)
         self.assertEqual(self.ask_rules().count("mcp__kite__place_order"), 1)
 
     def test_linux_runs_it_as_a_systemd_user_service(self):

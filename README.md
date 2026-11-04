@@ -94,7 +94,7 @@ Then:
    link a day per session.
 3. **Read-only first.** Ask Claude for your Kite profile, margins and
    positions. With `EXCLUDED_TOOLS` in the key file, Claude cannot place,
-   change or cancel an order.
+   change or cancel an order or a GTT.
 4. **Live, when you decide.** Register your static IP in Kite (Profile, IP
    whitelist), set `"static_ip_registered": true` and `"paper": false` in
    `trader/config.json`, delete the `EXCLUDED_TOOLS` line from the key file,

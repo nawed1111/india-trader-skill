@@ -83,9 +83,17 @@ import json, os, plistlib
 
 E = os.environ
 HOME = os.path.expanduser("~")
-ORDER_TOOLS = "place_order,modify_order,cancel_order"
-NEEDS_APPROVAL = ["mcp__kite__" + t for t in ("place_order", "modify_order", "cancel_order",
-                                              "place_gtt_order", "modify_gtt_order", "delete_gtt_order")]
+# every tool that places, changes or cancels an order, a GTT included: off at the server, and asking in Claude
+ORDER_TOOL_NAMES = ("place_order", "modify_order", "cancel_order", "place_gtt_order", "modify_gtt_order",
+                    "delete_gtt_order")
+ORDER_TOOLS = ",".join(ORDER_TOOL_NAMES)
+NEEDS_APPROVAL = ["mcp__kite__" + t for t in ORDER_TOOL_NAMES]
+
+
+def with_order_tools(excluded):
+    """An EXCLUDED_TOOLS value plus any order tool it leaves out."""
+    have = [t for t in (excluded or "").split(",") if t]
+    return ",".join(have + [t for t in ORDER_TOOL_NAMES if t not in have])
 
 
 def load_json(path):
@@ -138,7 +146,7 @@ if have is None or (not real(have) and moved):
              "# Delete the EXCLUDED_TOOLS line only when you go live (see /bharat-broker).",
              "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"],
              # always, moved keys too: an old config without the line never chose to go live
-             "EXCLUDED_TOOLS=" + (keys.get("EXCLUDED_TOOLS") or ORDER_TOOLS)]
+             "EXCLUDED_TOOLS=" + with_order_tools(keys.get("EXCLUDED_TOOLS"))]
     os.makedirs(os.path.dirname(E["KITE_ENV"]), mode=0o700, exist_ok=True)
     fd = os.open(E["KITE_ENV"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
@@ -150,6 +158,10 @@ if have is None or (not real(have) and moved):
         print("   then restart the server: " + E["RESTART"])
 else:
     print("   key file kept: " + E["KITE_ENV"])
+    if have.get("EXCLUDED_TOOLS") and with_order_tools(have["EXCLUDED_TOOLS"]) != have["EXCLUDED_TOOLS"]:
+        print("   note: its EXCLUDED_TOOLS line leaves some order tools on. To switch them all off, make it")
+        print("      EXCLUDED_TOOLS=" + with_order_tools(have["EXCLUDED_TOOLS"]))
+        print("   then restart the server: " + E["RESTART"])
 
 # The service: started at login, restarted if it stops (it exits while another copy still holds port 8080)
 exe = E["KITE_BIN"]
