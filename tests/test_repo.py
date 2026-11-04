@@ -120,7 +120,8 @@ class Repo(unittest.TestCase):
     def test_readme_options_words(self):
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
             readme = fh.read()
-        for words in ("buying only", "implied volatility", "held constant", "STT on its intrinsic value"):
+        for words in ("buying only", "implied volatility", "held constant", "STT on its intrinsic value",
+                      "max_option_cost_share", "1,800 units", "at a limit"):
             self.assertIn(words, readme)
 
     def test_no_em_dashes_and_no_personal_email(self):
