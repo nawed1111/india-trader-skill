@@ -59,6 +59,29 @@ class ExplicitYes(unittest.TestCase):
                   "yes, stop 1215.35", "yes?", "no", "not yes", "yes, wait", "yes if it is under 1230"):
             self.assertFalse(self.yes(r), r)
 
+    def test_every_number_in_the_yes_must_be_this_orders(self):
+        # 73 is the qty, but 1300 is not the limit, stop, target or max loss
+        for r in ("yes 73 at 1300", "yes 73 shares, and 5000 more", "yes 73 at 1227.85"):
+            self.assertFalse(self.yes(r, order=rel(type="limit", limit_price="1227.80")), r)
+        self.assertTrue(self.yes("yes 73 at 1227.80", order=rel(type="limit", limit_price="1227.80")))
+
+    def test_a_yes_naming_a_stock_outside_the_batch(self):
+        for r in ("yes TCS", "yes tcs", "yes buy INFY", "yes, go for HDFCBANK"):
+            ok, why = ticket.parse_yes(r, rel(), ["RELIANCE"])
+            self.assertFalse(ok, r)
+        self.assertIn("tcs", ticket.parse_yes("yes tcs", rel(), ["RELIANCE"])[1].lower())
+
+    def test_a_yes_for_the_other_side(self):
+        self.assertFalse(self.yes("yes sell it"))                                # this order is a buy
+        self.assertTrue(self.yes("yes sell 73", order=rel(side="sell")))
+
+    def test_a_yes_naming_its_own_fno_contract(self):
+        opt = {"symbol": "NIFTY26NOV24000CE", "exchange": "NFO", "side": "buy", "qty": "65", "type": "limit",
+               "limit_price": "120.50", "time_in_force": "day"}
+        for r in ("yes NIFTY26NOV24000CE", "yes 65 NIFTY26NOV24000CE at 120.50", "yes buy nifty26nov24000ce"):
+            self.assertTrue(ticket.parse_yes(r, opt, ["NIFTY26NOV24000CE"])[0], r)
+        self.assertFalse(ticket.parse_yes("yes NIFTY26NOV24100CE", opt, ["NIFTY26NOV24000CE"])[0])
+
 
 class TicketShape(unittest.TestCase):
     def test_the_order_fields_leave_out_why_and_plan(self):
