@@ -279,8 +279,7 @@ The tests run offline, on fixtures cut from real data fetched on 4 November
 announcements, insider disclosures, deals and FII/DII figures, RELIANCE's
 quarterly XBRL filings, and three trades run through Zerodha's own brokerage
 calculator. They reproduce every number in the example above.
-`tools/probe.py` refetches the sources; `docs/p0-findings.md` says what each
-one returned and its quirks.
+`tools/probe.py` refetches the sources.
 
 ## Fine print
 

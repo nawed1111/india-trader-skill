@@ -53,6 +53,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -728,8 +729,8 @@ def cmd_flatten(a):
     if seg == "opt" and a.limit is None:
         raise TicketError("an option is flattened at a limit, never market (a market sell can fill far under its "
                           "value): read the bid on Kite and pass --limit PRICE")
-    if a.limit is not None and (_f(a.limit) or 0) <= 0:
-        raise TicketError("--limit wants a price above 0")
+    if a.limit is not None and not (_f(a.limit) is not None and math.isfinite(_f(a.limit)) and _f(a.limit) > 0):
+        raise TicketError("--limit wants a price above 0, got %r" % a.limit)
     order = {"symbol": sym, "exchange": "NSE" if seg == SEGMENT else "NFO", "product": "MIS", "side": "sell",
              "qty": _str_num(qty), "type": "limit" if a.limit is not None else "market", "time_in_force": "day",
              "why": "flat by %s IST: closes the %s intraday trade before the broker's 15:20 square-off "
@@ -737,6 +738,9 @@ def cmd_flatten(a):
     lim = None
     if a.limit is not None:   # NSE rejects an off-tick price; down, so the sell that gets you out fills
         lim = india.tick_round(_f(a.limit), mode="down")
+        if lim < 0.05 - 1e-9:
+            raise TicketError("--limit %s is under NSE's 0.05 tick and would round down to 0.00: the lowest limit "
+                              "is 0.05" % a.limit)
         order["limit_price"] = _p(lim)
     if seg != SEGMENT:
         order["instrument"] = seg

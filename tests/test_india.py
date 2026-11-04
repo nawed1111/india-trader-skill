@@ -255,6 +255,8 @@ class OptionsMath(unittest.TestCase):
                           "right": "CE", "weekly": True})
         self.assertEqual(india.parse_option_symbol("BANKNIFTY26OCT55000PE")["expiry"], None)
         self.assertIsNone(india.parse_option_symbol("NIFTY26OCTFUT"))
+        for s in ("NIFTY26N3123100CE", "NIFTY26O0023100CE", "NIFTY2623023100CE"):   # 31 Nov, day 00, 30 Feb
+            self.assertIsNone(india.parse_option_symbol(s), s)
         n = 0
         for r in self.r19:
             if r["kind"] == "opt" and r["symbol"] in ("NIFTY", "BANKNIFTY"):

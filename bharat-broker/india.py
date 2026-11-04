@@ -375,14 +375,18 @@ OPT_NAME = re.compile(r"^([A-Z&\-]+?)(\d{2})(?:([1-9OND])(\d{2})|([A-Z]{3}))(\d+
 
 
 def parse_option_symbol(text):
-    """{symbol, expiry (None for a monthly name), month YYYY-MM, strike, right, weekly}, or None."""
+    """{symbol, expiry (None for a monthly name), month YYYY-MM, strike, right, weekly}, or None
+    (None also for a name NSE could not issue, like a weekly dated 31 Nov)."""
     m = OPT_NAME.match(str(text or "").upper())
     if not m or (m.group(5) and m.group(5) not in MONTHS):
         return None
     yy = 2000 + int(m.group(2))
     if m.group(3):
         month = WEEK_CODE.index(m.group(3)) + 1
-        exp = date(yy, month, int(m.group(4)))
+        try:
+            exp = date(yy, month, int(m.group(4)))
+        except ValueError:
+            return None
     else:
         month, exp = MONTHS.index(m.group(5)) + 1, None
     return {"symbol": m.group(1), "expiry": exp, "month": "%d-%02d" % (yy, month), "strike": float(m.group(6)),

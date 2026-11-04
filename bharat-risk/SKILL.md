@@ -67,7 +67,7 @@ batch that is fine order by order but breaks a limit together is caught.
 | check | blocks when |
 | --- | --- |
 | format | no symbol, side not buy or sell, no whole-share qty (NSE has no rupee-amount orders), a limit order with no limit price, a bracket that misses its stop-loss or take-profit |
-| asset | an F&O contract (`NIFTY26NOVFUT`, `...CE`, `...PE`) while `allow_fno` is false; anything that is not an NSE symbol |
+| asset | an F&O contract (`NIFTY26NOVFUT`, `...CE`, `...PE`) while `allow_fno` is false; anything that is not an NSE symbol; an F&O-looking name it cannot read (a bad month code, or a weekly dated 31 Nov), exits included |
 | short | a sell of more than you hold (`allow_short` false) |
 | product | (entries) anything but MIS: P1 plans intraday trades only |
 | blocked | (entries) the symbol is on the `blocked` list |

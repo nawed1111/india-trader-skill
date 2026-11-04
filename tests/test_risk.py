@@ -250,6 +250,27 @@ FUT_NOW = "2026-10-21 09:36"
 
 
 class Futures(unittest.TestCase):
+    def test_an_unreadable_name_with_instrument_fut_blocks(self):
+        for sym in ("NIFTY26NOV", "NIFTYFUT", "NIFTY26NOVFU", "NIFTY26NOV23100XE"):
+            r = one([fut_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertEqual(r["verdict"], "BLOCK", sym)
+            self.assertTrue([x for x in r["reasons"] if x.startswith("asset:") and sym in x], (sym, r["reasons"]))
+
+    def test_a_real_future_with_digits_in_its_underlying_is_readable(self):
+        for sym in ("NIFTYNXT5026NOVFUT", "360ONE26NOVFUT"):
+            r = one([fut_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertFalse([x for x in r["reasons"] if x.startswith("asset:")], (sym, r["reasons"]))
+            pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+            sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65", "type": "limit",
+                    "limit_price": "150.00", "time_in_force": "day", "instrument": "fut", "lot": 65}
+            r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+            self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), (sym, r))
+
+    def test_a_futures_name_with_a_bad_month_blocks(self):
+        r = one([fut_order(symbol="NIFTY26XYZFUT")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue([x for x in r["reasons"] if x.startswith("asset:") and "NIFTY26XYZFUT" in x], r["reasons"])
+
     def test_the_example_passes_with_costs_and_margin(self):
         r = one([fut_order()], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual((r["verdict"], r["reasons"]), ("PASS", []), r)
@@ -486,6 +507,47 @@ class Options(unittest.TestCase):
         r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
         self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
 
+    def asset_reason(self, r, sym):
+        return [x for x in r["reasons"] if x.startswith("asset:") and sym in x]
+
+    def test_a_bad_month_code_blocks(self):
+        sym = "NIFTY26XYZ23100CE"
+        r = one([opt_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+        o = opt_order(symbol=sym)
+        o.pop("instrument", None)
+        o.pop("exchange", None)
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+
+    def test_an_impossible_weekly_date_blocks_not_crashes(self):
+        sym = "NIFTY26N3123100CE"   # 31 Nov
+        r = one([opt_order(symbol=sym, expiry=None)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+
+    def test_a_real_contract_with_digits_in_its_underlying_is_not_unreadable(self):
+        # 360ONE and NIFTYNXT50 are real NSE contracts the name parser cannot split; they must not block as unreadable
+        for sym in ("360ONE26NOV1200CE", "NIFTYNXT5026NOV60000CE"):
+            r = one([opt_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertFalse(self.asset_reason(r, sym), r["reasons"])
+            pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+            sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65", "type": "limit",
+                    "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+            r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+            self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
+
+    def test_a_bad_name_blocks_an_exit_too(self):
+        sym = "NIFTY26XYZ23100CE"
+        pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+        sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+        r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertTrue(self.asset_reason(r, sym), r["reasons"])
+
     def exit_sell(self, **over):
         pf = {"cash": 200000, "positions": [{"ticker": EX.OPT_CONTRACT, "shares": 65, "lots": []}]}
         sell = {"symbol": EX.OPT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
@@ -571,6 +633,40 @@ class Options(unittest.TestCase):
         r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("costs:", " ".join(r["reasons"]))
+
+    @staticmethod
+    def no_stop(o):
+        for k in ("stop_loss_stop_price", "stop_loss_limit_price", "take_profit_limit_price", "order_class"):
+            o.pop(k, None)
+        return o
+
+    def cheap_no_stop(self, **over):
+        return self.no_stop(opt_order(limit_price="3.00", plan={"entry": 3.0, "target": 6.0}, **over))
+
+    def test_a_cheap_option_without_a_stop_still_blocks_on_costs(self):
+        r = one([self.cheap_no_stop()], fut_cfg(require_stop=False), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK", r)
+        why = " ".join(r["reasons"])
+        self.assertIn("max_option_cost_share", why)
+        self.assertIn("Rs 195", why)
+
+    def test_enough_cheap_lots_pass_without_a_stop(self):
+        r = one([self.cheap_no_stop(qty="325")], fut_cfg(require_stop=False, max_lots=5), now=FUT_NOW)["results"][0]
+        self.assertNotIn("max_option_cost_share", " ".join(r["reasons"]))
+
+    def test_no_stop_and_no_qty_does_not_crash(self):
+        o = self.cheap_no_stop()
+        del o["qty"]
+        r = one([o], fut_cfg(require_stop=False), now=FUT_NOW)["results"][0]
+        why = " ".join(r["reasons"])
+        self.assertIn("no qty", why)
+        self.assertNotIn("max_option_cost_share", why)
+
+    def test_the_cost_check_runs_once_with_a_stop(self):
+        o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(sum("max_option_cost_share" in x for x in r["reasons"]), 1, r["reasons"])
 
     def test_a_cheap_option_blocks_whatever_the_target(self):
         o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
