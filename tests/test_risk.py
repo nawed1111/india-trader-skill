@@ -224,6 +224,69 @@ class DayTradeChecks(unittest.TestCase):
         self.assertIn('LIVE account ("paper": false): these orders use real money', one([rel()], cfg(paper=False))["warnings"])
 
 
+import example_values as EX  # noqa: E402
+size = load("bharat-budget", "size")
+
+
+def fut_cfg(**over):
+    c = cfg(max_loss_per_trade_inr=EX.FUT_MAX_LOSS_LIMIT, margin_per_lot_inr={"NIFTY": EX.FUT_MARGIN_PER_LOT},
+            allow_fno=True, max_daily_loss_inr=14000)
+    c.update(over)
+    return c
+
+
+def fut_order(**over):
+    plan = {"symbol": "NIFTY", "side": "buy", "date": EX.FUT_DATE, "setup": "orb", "entry_time": EX.FUT_TRIGGER_AT,
+            "instrument": "fut", "contract": EX.FUT_CONTRACT, "lot": EX.FUT_LOT, "expiry": EX.FUT_EXPIRY,
+            "basis_date": EX.FUT_BASIS_DATE, "basis_estimated": False, "entry": EX.FUT_PRICE,
+            "stop": EX.FUT_STOP, "target": EX.FUT_TARGET, "flat_by": "15:15"}
+    o = size.bracket_order(size.size_trade(plan, fut_cfg(), today=EX.FUT_DATE))
+    o.update(over)
+    return o
+
+
+FUT_NOW = "2026-10-21 09:36"
+
+
+class Futures(unittest.TestCase):
+    def test_the_example_passes_with_costs_and_margin(self):
+        r = one([fut_order()], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual((r["verdict"], r["reasons"]), ("PASS", []), r)
+        self.assertEqual(r["max_loss"], EX.FUT_MAX_LOSS)
+        info = " ".join(r["info"])
+        self.assertIn("costs Rs 894.53 at the stop", info)
+        self.assertIn("margin Rs 1,75,953 for 1 lot", info)
+
+    def test_fno_off_blocks(self):
+        r = one([fut_order()], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("allow_fno", " ".join(r["reasons"]))
+
+    def test_qty_must_be_whole_lots(self):
+        r = one([fut_order(qty="64")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("lot of 65", " ".join(r["reasons"]))
+
+    def test_a_new_entry_on_expiry_day_blocks_and_names_the_next(self):
+        o = fut_order(symbol="NIFTY26NOVFUT", expiry="2026-11-23")
+        r = one([o], fut_cfg(), now="2026-11-23 09:36")["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("trade NIFTY26DECFUT", " ".join(r["reasons"]))
+
+    def test_an_estimated_basis_blocks_a_market_entry(self):
+        r = one([fut_order(basis_estimated=True)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("estimated", " ".join(r["reasons"]))
+
+    def test_margin_and_max_lots(self):
+        r = one([fut_order()], fut_cfg(margin_per_lot_inr={}), now=FUT_NOW)["results"][0]
+        self.assertIn("margin_per_lot_inr", " ".join(r["reasons"]))
+        r = one([fut_order()], fut_cfg(margin_per_lot_inr={"NIFTY": 300000}), now=FUT_NOW)["results"][0]
+        self.assertIn("margin:", " ".join(r["reasons"]))
+        r = one([fut_order(qty="130", lots=2)], fut_cfg(max_loss_per_trade_inr=20000), now=FUT_NOW)["results"][0]
+        self.assertIn("max_lots", " ".join(r["reasons"]))
+
+
 class Exits(unittest.TestCase):
     PF = {"cash": 110370.6, "positions": [{"ticker": "RELIANCE", "shares": 73}]}
 

@@ -81,7 +81,10 @@ DEFAULTS = {
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "max_cost_share": 0.25, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False, "allow_short": False,
+    "margin_per_lot_inr": {}, "max_lots": 1,
 }
+MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+FUT_NAME = re.compile(r"^([A-Z&\-]+)(\d{2})([A-Z]{3})FUT$")
 ORDER_FIELDS = ("symbol", "exchange", "product", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                  "order_class", "take_profit_limit_price", "stop_loss_stop_price",
@@ -200,9 +203,18 @@ def money(x):
     return india.inr(x)
 
 
-def costs(qty, buy, sell):
-    """Round-trip Zerodha intraday charges for qty shares (Rs)."""
-    return india.round_trip("eq_intraday", qty, buy, sell)["total"] if qty and qty > 0 else 0.0
+def costs(qty, buy, sell, segment="eq_intraday"):
+    """Round-trip Zerodha charges for qty shares or units (Rs)."""
+    return india.round_trip(segment, qty, buy, sell)["total"] if qty and qty > 0 else 0.0
+
+
+def next_contract(name):
+    """NIFTY26NOVFUT -> NIFTY26DECFUT (the next monthly future); None if it is not a futures name."""
+    m = FUT_NAME.match(name or "")
+    if not m or m.group(3) not in MONTHS:
+        return None
+    i, yy = MONTHS.index(m.group(3)) + 1, int(m.group(2))
+    return "%s%02d%sFUT" % (m.group(1), yy + i // 12, MONTHS[i % 12])
 
 
 def _cent(x):
@@ -329,6 +341,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         legs = o.get("take_profit_limit_price") is not None or o.get("stop_loss_stop_price") is not None
         bracket = oc == "bracket" or (not oc and legs)
         value = None
+        fut = o.get("instrument") == "fut" or str(o.get("exchange") or "").upper() == "NFO"
+        seg = "fut" if fut else "eq_intraday"
+        lot = int(_f(o.get("lot")) or 0) if fut else 0
+        lots = None
 
         # format
         if not sym:
@@ -341,6 +357,13 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             reasons.append("format: no qty")
         elif _f(qty) is not None and abs(_f(qty) - round(_f(qty))) > 1e-9:
             reasons.append("format: NSE orders take whole shares only, got qty %r" % qty)
+        elif fut:
+            if lot <= 0:
+                reasons.append("format: a futures order needs its lot size (bharat-budget writes it)")
+            elif int(round(_f(qty) or 0)) % lot:
+                reasons.append("format: %s trades in whole lots, a lot of %d units; qty %s is not" % (sym, lot, qty))
+            else:
+                lots = int(round(_f(qty))) // lot
         for k in PRICE_FIELDS:
             if o.get(k) is not None:
                 v = _f(o.get(k))
@@ -431,7 +454,11 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         # blocked list and size
         if sym in blocked:
             later.append("blocked: %s is on your blocked list" % sym)
-        if value is not None:
+        if value is not None and fut:
+            cap_n = _f(c.get("max_fut_notional_inr"))
+            if cap_n and value > cap_n + CENT:
+                later.append("size: %s notional is over your %s max_fut_notional_inr" % (money(value), money(cap_n)))
+        elif value is not None:
             if value < float(c.get("min_order_inr") or 0) - CENT:
                 later.append("size: %s is under your %s minimum order"
                              % (money(value), money(c["min_order_inr"])))
@@ -443,7 +470,34 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         cash = acct["cash"]
         total = cash + sum(acct["values"].values())
         buffer_inr = total * float(c.get("cash_buffer_pct") or 0) / 100.0
-        if value is not None and side == "buy" and kind == "entry":
+        need_margin = None
+        if fut and kind == "entry" and lots:
+            und = str(o.get("underlying") or "").upper() or (FUT_NAME.match(sym).group(1) if FUT_NAME.match(sym) else sym)
+            mtab = c.get("margin_per_lot_inr") or {}
+            m = _f(mtab.get(und)) if isinstance(mtab, dict) else None
+            if not m or m <= 0:
+                later.append("margin: no figure for %s; set \"margin_per_lot_inr\": {\"%s\": RUPEES} from Zerodha's "
+                             "margin calculator. It is never guessed" % (und, und))
+            else:
+                need_margin = lots * m
+                info.append("margin %s for %d lot%s (%s a lot, MIS = NRML for F&O)" % (
+                    money(need_margin), lots, "" if lots == 1 else "s", money(m)))
+                if cash - need_margin < buffer_inr - CENT:
+                    later.append("margin: %d lot%s need %s, which leaves %s cash, under your %s%% buffer of %s" % (
+                        lots, "" if lots == 1 else "s", money(need_margin), money(max(cash - need_margin, 0)),
+                        _pct(c["cash_buffer_pct"]), money(buffer_inr)))
+            max_lots = int(_f(c.get("max_lots")) or 1)
+            if lots > max_lots:
+                later.append("lots: %d lots is over your max_lots %d" % (lots, max_lots))
+            if str(o.get("expiry") or "") == today:
+                nxt = next_contract(sym)
+                later.append("expiry: %s expires today; no new entry in an expiring contract%s" % (
+                    sym, (": trade %s" % nxt) if nxt else ""))
+            if o.get("basis_estimated") and typ == "market":
+                later.append("basis: the futures price is estimated from an old bhavcopy (%s); a market entry on it "
+                             "is blocked. Read the live price on Kite and re-plan (bharat-exit --entry PRICE)"
+                             % (o.get("basis_date") or "an earlier day"))
+        if value is not None and side == "buy" and kind == "entry" and not fut:
             need = value / lev                 # the margin the broker blocks for an MIS buy
             after_cash = cash - need
             if after_cash < -CENT and not c.get("allow_margin"):
@@ -499,7 +553,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     risk_c = int(round(abs(ref - stop) * 100))
                     risk_ps = risk_c / 100.0
                     shares = q if q is not None else ((value or 0) / ref)
-                    cost_stop = costs(shares, ref, stop) if long else costs(shares, stop, ref)
+                    cost_stop = costs(shares, ref, stop, seg) if long else costs(shares, stop, ref, seg)
                     max_loss = round(shares * risk_ps + cost_stop, 2)
                     cap = _f(c.get("max_loss_per_trade_inr"))
                     if cap and max_loss > cap + CENT:
@@ -517,7 +571,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                                 later.append("reward:risk: %.2f (target %s, entry %s, stop %s) is under your "
                                              "minimum %s" % (rr, _p(target), _p(ref), _p(stop), _num(min_rr)))
                             reward = shares * abs(target - ref)
-                            cost_t = costs(shares, ref, target) if long else costs(shares, target, ref)
+                            cost_t = costs(shares, ref, target, seg) if long else costs(shares, target, ref, seg)
                             share = _f(c.get("max_cost_share"))
                             info.append("costs %s at the stop, %s at the target (%.0f%% of the %s reward)"
                                         % (money(cost_stop), money(cost_t), 100.0 * cost_t / reward if reward else 0,
@@ -543,7 +597,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
             later.extend(win_reasons)
             b = bands.get(sym) or {}
-            if long and not (_f(b.get("band")) and _f(b.get("prev_close"))):
+            if long and not fut and not (_f(b.get("band")) and _f(b.get("prev_close"))):
                 warns.append("band: no price band known for %s, so the band check is off (bharat-entry --band, or "
                              "the band the scanner wrote)" % sym)
             if long and ref and _f(b.get("band")) and _f(b.get("prev_close")):
@@ -592,7 +646,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if kind == "entry" and side in ("buy", "sell"):
                 batch_entries += 1
                 batch_loss += max_loss or 0.0
-            if side == "buy":
+            if side == "buy" and need_margin is not None:
+                acct["cash"] -= need_margin
+            elif side == "buy":
                 if value is not None:
                     acct["cash"] -= value
                     acct["values"][sym] = acct["values"].get(sym, 0.0) + value
