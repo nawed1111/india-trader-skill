@@ -42,6 +42,15 @@ class Repo(unittest.TestCase):
         self.assertLessEqual(required, root)
         self.assertLessEqual(root - required, {"docs", "tools", "india"})
 
+    def test_india_copies_identical(self):
+        with open(os.path.join(ROOT, "india", "india.py"), "rb") as fh:
+            master = fh.read()
+        for s in SKILLS:
+            path = os.path.join(ROOT, s, "india.py")
+            self.assertTrue(os.path.isfile(path), "%s has no india.py: run tools/sync_india.py" % s)
+            with open(path, "rb") as fh:
+                self.assertEqual(fh.read(), master, "%s/india.py differs: run tools/sync_india.py" % s)
+
     def test_frontmatter_name_and_description(self):
         for s in SKILLS:
             fm, text = frontmatter(os.path.join(ROOT, s, "SKILL.md"))
