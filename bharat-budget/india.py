@@ -461,8 +461,9 @@ SLEEP = _time.sleep
 
 def nse_get(url, timeout=20, opener=None, warm=True, want_json=True):
     """GET an NSE URL. Warms cookies on the home page once (best effort: it
-    can 403 itself), sends a browser User-Agent, retries 3 times with backoff
-    on 401/403/429/5xx. Raises NSEError when it gives up, or on an HTML page
+    can 403 itself), sends a browser User-Agent, tries 3 times, 1 and then 2
+    seconds apart, on 401/403/429/5xx or no answer. Raises NSEError when it
+    gives up (at once, with no wait after the last try), or on an HTML page
     where JSON was wanted."""
     op = opener or _opener
     if warm and not _warmed:
@@ -477,6 +478,8 @@ def nse_get(url, timeout=20, opener=None, warm=True, want_json=True):
                "Accept-Language": "en-US,en;q=0.9", "Accept-Encoding": "gzip"}
     last = "no answer"
     for attempt in range(3):
+        if attempt:
+            SLEEP(2 ** (attempt - 1))   # before a retry only: after the last try there is nothing to wait for
         try:
             with op.open(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
                 body = r.read()
@@ -485,12 +488,10 @@ def nse_get(url, timeout=20, opener=None, warm=True, want_json=True):
         except urllib.error.HTTPError as e:
             last = "HTTP %d" % e.code
             if e.code in (401, 403, 429) or e.code >= 500:
-                SLEEP(2 ** attempt)
                 continue
             raise NSEError(url, last)
         except (urllib.error.URLError, OSError) as e:
             last = str(getattr(e, "reason", e))
-            SLEEP(2 ** attempt)
             continue
         if want_json and body.lstrip()[:1] == b"<":
             raise NSEError(url, "got an HTML page, not JSON (NSE blocked the request)")

@@ -129,6 +129,26 @@ class Fetch(unittest.TestCase):
             india.nse_get("https://www.nseindia.com/api/x", opener=Opener(), warm=False)
         self.assertIn("api/x", str(cm.exception))
 
+    def test_a_blocked_fetch_waits_only_between_its_three_tries(self):
+        import io
+        import urllib.error
+        tries, slept = [], []
+
+        class Blocked:
+            def open(self, req, timeout=None):
+                tries.append(req.full_url)
+                raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, io.BytesIO(b""))
+
+        saved, india.SLEEP = india.SLEEP, slept.append
+        try:
+            with self.assertRaises(india.NSEError) as cm:
+                india.nse_get("https://www.nseindia.com/api/x", opener=Blocked(), warm=False)
+        finally:
+            india.SLEEP = saved
+        self.assertIn("HTTP 403", str(cm.exception))
+        self.assertEqual(len(tries), 3)
+        self.assertEqual(slept, [1, 2])          # no wait after the last try: it gives up at once
+
 
 P2 = os.path.join(FIX, "p2")
 
