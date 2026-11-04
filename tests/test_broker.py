@@ -128,7 +128,8 @@ class Futures(unittest.TestCase):
                                                  trigger_price=23040.3))
 
     def test_paper_round_trip_pays_futures_charges(self):
-        ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "buy", 65, EX.FUT_PRICE, EX.FUT_DATE)
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "buy", 65, EX.FUT_PRICE, EX.FUT_DATE)
+        self.assertEqual(pf["cash"], round(200000 - india.leg_costs("fut", "buy", 65, EX.FUT_PRICE)["total"], 2))
         pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "sell", 65, EX.FUT_TARGET, EX.FUT_DATE)
         legs = (india.leg_costs("fut", "buy", 65, EX.FUT_PRICE)["total"]
                 + india.leg_costs("fut", "sell", 65, EX.FUT_TARGET)["total"])

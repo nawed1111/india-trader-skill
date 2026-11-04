@@ -453,6 +453,7 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
     if qty <= 0 or price <= 0:
         raise TicketError("a fill needs a positive qty and price")
     cost = round(qty * price, 2)
+    fut = segment_of(symbol) == "fut"
     charges = india.leg_costs(segment_of(symbol), side, qty, price)["total"]
     pos = None
     for p in pf.setdefault("positions", []):
@@ -465,17 +466,19 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
         lots = pos.setdefault("lots", [])
         lots.append({"id": "%s-%d" % (symbol, len(lots) + 1), "date": date, "shares": qty, "cost": cost})
         pos["shares"] = round(float(pos.get("shares", 0)) + qty, 6)
-        pf["cash"] = round(float(pf.get("cash", 0)) - cost - charges, 2)
+        # a future blocks margin, it is not bought outright: only the charges leave the cash now
+        pf["cash"] = round(float(pf.get("cash", 0)) - (0 if fut else cost) - charges, 2)
     else:
         if pos is None or float(pos.get("shares", 0)) + 1e-9 < qty:
             raise TicketError("cannot record selling %s %s: the portfolio holds %s"
                               % (_str_num(qty), symbol, pos.get("shares", 0) if pos else 0))
-        left = qty
+        left, relieved = qty, 0.0
         for lot in sorted(pos.get("lots", []), key=lambda l: l.get("date", "")):
             if left <= 1e-9:
                 break
             take = min(left, float(lot["shares"]))
             per = float(lot["cost"]) / float(lot["shares"]) if float(lot["shares"]) else 0
+            relieved += per * take
             lot["cost"] = round(float(lot["cost"]) - per * take, 2)
             lot["shares"] = round(float(lot["shares"]) - take, 6)
             left -= take
@@ -483,7 +486,7 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
         pos["shares"] = round(float(pos["shares"]) - qty, 6)
         if pos["shares"] <= 1e-9:
             pf["positions"].remove(pos)
-        pf["cash"] = round(float(pf.get("cash", 0)) + cost - charges, 2)
+        pf["cash"] = round(float(pf.get("cash", 0)) + (cost - relieved if fut else cost) - charges, 2)
     fees = pf.setdefault("charges", {})
     fees[date] = round(float(fees.get(date, 0)) + charges, 2)
     write_json(portfolio_path, pf)

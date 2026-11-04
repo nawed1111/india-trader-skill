@@ -501,6 +501,12 @@ class Futures(unittest.TestCase):
         self.assertIn("rolls over", " ".join(f["warnings"]))
         self.assertIn("NIFTY26DECFUT", " ".join(f["warnings"]))
 
+    def test_watch_gets_the_bhavcopy_before_the_first_bar(self):
+        code, _, err = run(["watch", "NIFTY", "--instrument", "fut", "--offline", NSEI, "--now", "2026-10-21 09:00",
+                            "--until", "09:20", "--bhavcopy", os.path.join(self.d, "missing.zip")])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read the bhavcopy", err)   # said at the start, not lost at the trigger
+
     def test_fut_needs_an_index(self):
         code, _, err = run(["check", "RELIANCE", "--instrument", "fut", "--offline", REL,
                             "--now", "2026-10-19 09:50", "--bhavcopy", BHAV19])

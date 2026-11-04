@@ -167,7 +167,10 @@ For an NFO order (`instrument: fut`), with `allow_fno` on:
 - **margin** lots x `margin_per_lot_inr[underlying]` must leave the cash
   buffer; no figure blocks. It replaces the cash, position and max-order
   checks (`max_fut_notional_inr` caps the notional if set).
-- **lots** more than `max_lots` blocks.
+- **lots** more than `max_lots`, counting the lots already held, blocks.
+- **entry** a market order whose futures price is the bhavcopy estimate
+  blocks (the basis can move 75 points in a session): send a limit order or
+  give the live price (`fut_price_source: user`).
 - **expiry** a new entry in a contract that expires today blocks and names
   the next one ("trade NIFTY26DECFUT").
 - **basis** a market entry whose futures price is estimated from an old

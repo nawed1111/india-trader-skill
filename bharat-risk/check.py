@@ -490,8 +490,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                         lots, "" if lots == 1 else "s", money(need_margin), money(max(cash - need_margin, 0)),
                         _pct(c["cash_buffer_pct"]), money(buffer_inr)))
             max_lots = int(_f(c.get("max_lots")) or 1)
-            if lots > max_lots:
-                later.append("lots: %d lots is over your max_lots %d" % (lots, max_lots))
+            held_lots = int(max(held, 0) // lot) if lot else 0
+            if lots + held_lots > max_lots:
+                later.append("lots: %d lots%s is over your max_lots %d" % (
+                    lots, (" plus %d held" % held_lots) if held_lots else "", max_lots))
+            if typ == "market" and o.get("fut_price_source") != "user":
+                later.append("entry: the futures entry is an estimate from the bhavcopy basis (it can move 75 points "
+                             "in a session), so a market order could fill far from the plan and break the max loss. "
+                             "Send a limit order (bharat-budget size.py --limit) or give the live price "
+                             "(bharat-exit --entry PRICE)")
             if str(o.get("expiry") or "") == today:
                 nxt = next_contract(sym)
                 later.append("expiry: %s expires today; no new entry in an expiring contract%s" % (

@@ -136,14 +136,14 @@ def future_leg(rows, symbol, day, index_price, fut_price=None):
             "estimated": bool(stale and source == "bhavcopy"), "warnings": warnings}
 
 
-def attach_future(res, a):
+def attach_future(res, a, rows=None):
     """For --instrument fut, add res["future"] (the signal itself stays on the index)."""
     if a.instrument != "fut":
         return
     day = datetime.date.fromisoformat(res["date"])
     t = res.get("trigger")
     res["instrument"] = "fut"
-    res["future"] = future_leg(load_bhavcopy(a.bhavcopy, day), res["symbol"], day,
+    res["future"] = future_leg(rows if rows is not None else load_bhavcopy(a.bhavcopy, day), res["symbol"], day,
                                t["price"] if t else None, a.fut_price)
 
 
@@ -888,8 +888,12 @@ def cmd_watch(a):
         t = parse_hhmm(a.until, "--until")
         until = datetime.datetime.combine(to_local(now_fn()).date(), t)
 
+    rows = None
+    if a.instrument == "fut":  # fetched now: a download failure at the trigger would lose the signal
+        rows = load_bhavcopy(a.bhavcopy, to_local(now_fn()).date())
+
     def on_trigger(res, now):
-        attach_future(res, a)
+        attach_future(res, a, rows)
         for line in future_lines(res.get("future")):
             print(line, flush=True)
         write_json(a.out, entry_doc(res, now))

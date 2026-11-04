@@ -134,9 +134,10 @@ The plan carries `instrument: fut`, `contract`, `lot`, `expiry`,
 `basis_ratio`, `basis_date`, `basis_estimated`, `fut_price_source`, the
 index levels under `index`, `risk_per_unit` and `risk_per_lot`.
 
-`--entry PRICE` on a futures plan is your futures fill: the stop and target
-keep their distance in points from it. Re-plan on the fill when the entry
-was the bhavcopy estimate.
+`--entry PRICE` on a futures plan is the live futures price from Kite: the
+stop and target keep their distance in points from it. Give it before
+sizing. Without it, size a limit order at the estimate (`size.py --limit`):
+bharat-risk blocks a market entry on the bhavcopy estimate.
 
 ## What it never does
 

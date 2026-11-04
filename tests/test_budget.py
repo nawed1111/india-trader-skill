@@ -133,6 +133,7 @@ class Futures(unittest.TestCase):
                          ("NFO", "MIS", EX.FUT_CONTRACT, "65", "fut", 1, 65))
         self.assertEqual((o["stop_loss_stop_price"], o["take_profit_limit_price"]), ("23040.30", "23203.60"))
         self.assertEqual(o["underlying"], "NIFTY")
+        self.assertEqual(o["fut_price_source"], "bhavcopy")
         text = size.plan_report(s, o)
         self.assertIn("1 lot of NIFTY26OCTFUT", text)
         self.assertIn("margin", text)

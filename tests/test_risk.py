@@ -240,7 +240,8 @@ def fut_order(**over):
             "instrument": "fut", "contract": EX.FUT_CONTRACT, "lot": EX.FUT_LOT, "expiry": EX.FUT_EXPIRY,
             "basis_date": EX.FUT_BASIS_DATE, "basis_estimated": False, "entry": EX.FUT_PRICE,
             "stop": EX.FUT_STOP, "target": EX.FUT_TARGET, "flat_by": "15:15"}
-    o = size.bracket_order(size.size_trade(plan, fut_cfg(), today=EX.FUT_DATE))
+    limit = over.pop("_limit", EX.FUT_PRICE)
+    o = size.bracket_order(size.size_trade(plan, fut_cfg(), limit=limit, today=EX.FUT_DATE))
     o.update(over)
     return o
 
@@ -273,8 +274,21 @@ class Futures(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("trade NIFTY26DECFUT", " ".join(r["reasons"]))
 
+    def test_a_market_entry_on_the_basis_estimate_blocks(self):
+        # the basis moved 75 points in one session: an estimate is not an entry price
+        r = one([fut_order(_limit=None)], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("limit", " ".join(r["reasons"]))
+        r = one([fut_order(_limit=None, fut_price_source="user")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "PASS", r)
+
+    def test_max_lots_counts_what_you_hold(self):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65, "lots": []}]}
+        r = one([fut_order()], fut_cfg(budget=1000000), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertIn("max_lots", " ".join(r["reasons"]))
+
     def test_an_estimated_basis_blocks_a_market_entry(self):
-        r = one([fut_order(basis_estimated=True)], fut_cfg(), now=FUT_NOW)["results"][0]
+        r = one([fut_order(basis_estimated=True, _limit=None)], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("estimated", " ".join(r["reasons"]))
 

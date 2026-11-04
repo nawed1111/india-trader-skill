@@ -140,7 +140,7 @@ session after the Dussehra holiday.
    holiday): 22,895.20 / 22,888.95 = 1.000273, so the futures price is about
    23,121.95. The basis moves during the day (it was 0.997017 at the 21
    October close, 75 points lower), so this is an estimate: give the live
-   price with `--fut-price`, or re-plan on your fill.
+   price with `--fut-price`, or send a limit order at it.
 2. **`/bharat-exit`** moves the index plan to the future: the index stop is
    the range midpoint, 23,034.05, 81.60 points under the entry. In futures
    points that is a stop at 23,040.30 and a 1R target at 23,203.60: 81.65 a
@@ -156,12 +156,14 @@ session after the Dussehra holiday.
    stop are Rs 894.53 (STT 0.05 % on the sell, NSE 0.00173 %, stamp 0.002 %),
    so the loss at the stop is 65 x 81.65 + 894.53 = Rs 6,201.78. On this
    account that is 3 % in one trade: the default Rs 1,000 max loss refuses
-   any NIFTY lot, and the daily loss limit must be raised too. The order is
-   NFO, MIS, 65 NIFTY26OCTFUT, notional Rs 15.03 lakh.
+   any NIFTY lot, and the daily loss limit must be raised too. The order
+   (`size.py --limit`) is a limit buy of 65 NIFTY26OCTFUT at 23,121.95 on
+   NFO, MIS, notional Rs 15.03 lakh.
 5. **`/bharat-risk`** blocks F&O unless `allow_fno` is on, a qty that is not
    whole lots, a new entry in a contract that expires today (it names the
-   next one), a market entry on an estimated basis, a margin above your cash
-   after the buffer, and more than `max_lots` (default 1).
+   next one), a market entry on the basis estimate (it can be 75 points off:
+   use a limit order or give the live price), a margin above your cash after
+   the buffer, and more than `max_lots` (default 1, lots held included).
 6. **`/bharat-broker`** sends two Kite calls on NFO: the entry, then one SL-M
    stop (NSE dropped SL-M for options, not futures), each with
    `market_protection: -1`. Exchanges reject API market and SL-M orders

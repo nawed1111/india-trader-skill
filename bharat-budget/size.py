@@ -444,6 +444,7 @@ def size_futures(plan, c, sym, budget, limit, cash, entry_plan, stop, target):
         "refusal": refusal, "instrument": "fut", "contract": plan["contract"], "lot": lot,
         "expiry": plan.get("expiry"), "margin_per_lot": m, "margin": round(lots * m, 2) if m else None,
         "basis_estimated": bool(plan.get("basis_estimated")), "basis_date": plan.get("basis_date"),
+        "fut_price_source": plan.get("fut_price_source") or "bhavcopy",
     }
 
 
@@ -456,7 +457,7 @@ def bracket_order(s):
     if s.get("instrument") == "fut":
         o.update(symbol=s["contract"], exchange="NFO", instrument="fut", underlying=s["symbol"], lots=s["lots"],
                  lot=s["lot"], expiry=s["expiry"], margin=s["margin"], basis_estimated=s["basis_estimated"],
-                 basis_date=s["basis_date"])
+                 basis_date=s["basis_date"], fut_price_source=s["fut_price_source"])
     if s["order_type"] == "limit":
         o["limit_price"] = _price(s["entry"])
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "intraday trade")
@@ -486,6 +487,9 @@ def fut_report(s, order, notes=()):
     lines.append("Stop %s. Target %s. Risk %s a unit, %s a lot. Reward:risk %.2f." % (
         _price(s["stop"]), _price(s["target"]), _price(s["risk_per_share"]),
         money(s["risk_per_share"] * s["lot"]), s["reward_risk"]))
+    if s["fut_price_source"] != "user" and s["order_type"] == "market":
+        lines.append("The entry is the basis estimate, not a live price: bharat-risk blocks it as a market order. "
+                     "Use --limit (a limit at the plan's entry), or give the live price (bharat-exit --entry).")
     if s["basis_estimated"]:
         lines.append("The futures price is ESTIMATED from an old basis (%s): bharat-risk blocks a market entry "
                      "on it. Give the live price (bharat-exit --entry) first." % s["basis_date"])

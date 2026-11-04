@@ -656,8 +656,9 @@ def describe(plan):
         out.append("  Risk a unit   %s (%s%% of the entry); Risk a lot %s" % (
             money(plan["risk_per_unit"]), pct, money(plan["risk_per_lot"])))
         if plan["fut_price_source"] != "user":
-            out.append("  The futures entry is an estimate from the basis: re-plan on your fill with --entry, "
-                       "the stop and target keep their distance in points.")
+            out.append("  The futures entry is an estimate from the basis: give the live Kite price with --entry "
+                       "(the stop and target keep their points), or size a limit order at it; bharat-risk "
+                       "blocks a market entry on the estimate.")
     else:
         out.append("  Risk a share  %s (%s%% of the entry)" % (money(plan["risk_per_share"]), pct))
     out.append("  Reward:risk   %s" % ratio(plan["reward_risk"]))
