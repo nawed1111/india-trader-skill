@@ -141,6 +141,43 @@ class TheExample(unittest.TestCase):
             self.assertNotIn(word, text)
 
 
+P2 = os.path.join(FIX, "p2")
+with open(os.path.join(P2, "yahoo-NSEI-5m.json"), encoding="utf-8") as _fh:
+    NSEI = _fh.read()
+R = EX.FUT_BASIS
+FUT_PLAN = {"created_by": "bharat-exit", "symbol": "NIFTY", "side": "buy", "date": EX.FUT_DATE, "setup": "orb",
+            "entry_time": EX.FUT_TRIGGER_AT, "entry_bar": 3, "interval": "5m",
+            "opening_range": {"high": EX.FUT_OR_HIGH, "low": EX.FUT_OR_LOW, "minutes": 15},
+            "stop_rule": "or_mid", "target_r": 1.0, "flat_by": "15:15", "instrument": "fut",
+            "contract": EX.FUT_CONTRACT, "lot": EX.FUT_LOT, "expiry": EX.FUT_EXPIRY, "basis_ratio": R,
+            "basis_date": EX.FUT_BASIS_DATE, "basis_estimated": False,
+            "index": {"entry": EX.FUT_TRIGGER_CLOSE, "stop": EX.FUT_INDEX_STOP, "target": 23197.25},
+            "entry": EX.FUT_PRICE, "stop": EX.FUT_STOP, "target": EX.FUT_TARGET,
+            "risk_per_share": EX.FUT_RISK_PER_UNIT, "risk_per_unit": EX.FUT_RISK_PER_UNIT}
+NOW_FUT = tm.parse_now("2026-10-21 09:36")
+
+
+class Futures(unittest.TestCase):
+    def test_the_odds_are_the_index_odds(self):
+        fut = tm.time_machine(NSEI, tm.normalize_plan(FUT_PLAN), NOW_FUT)
+        ix_raw = {k: v for k, v in FUT_PLAN.items() if k not in ("instrument", "index")}
+        ix_raw.update(FUT_PLAN["index"])
+        ix = tm.time_machine(NSEI, tm.normalize_plan(ix_raw), NOW_FUT)
+        for k in ("p_target", "p_stop", "p_neither", "avg_R"):
+            self.assertEqual(fut["mc"][k], ix["mc"][k], k)
+        self.assertEqual(fut["fut"]["median_close"], round(ix["mc"]["median_close"] * R, 2))
+        self.assertEqual(fut["plan"]["entry"], EX.FUT_TRIGGER_CLOSE)  # replayed on the index
+        text = "\n".join(tm.report(fut))
+        self.assertIn("futures price = index x %.6f from %s" % (R, EX.FUT_BASIS_DATE), text)
+        self.assertIn(EX.FUT_CONTRACT, text)
+
+    def test_without_index_levels_it_divides_by_the_basis(self):
+        raw = {k: v for k, v in FUT_PLAN.items() if k != "index"}
+        p = tm.normalize_plan(raw)
+        self.assertAlmostEqual(p["stop"], EX.FUT_STOP / R, places=6)
+        self.assertEqual(p["fut"]["stop"], EX.FUT_STOP)
+
+
 class Seeds(unittest.TestCase):
     def test_same_seed_same_numbers(self):
         self.assertEqual(machine(replays=2000, seed=5)["mc"], machine(replays=2000, seed=5)["mc"])

@@ -124,6 +124,21 @@ to the entry (ATR 7.457) is 1216.6142, rounded down to the tick: 1,216.60.
   prediction that the price gets there.
 - Long side only. P1 plans longs only.
 
+## Index futures (P2)
+
+From a futures `trader/entry.json` the stop and target rules run on the
+index (the or-mid stop is the index range's midpoint), then move to the
+future: stop = futures entry - the index risk in points x the basis (tick
+down), target = futures entry + the reward in points x the basis (tick up).
+The plan carries `instrument: fut`, `contract`, `lot`, `expiry`,
+`basis_ratio`, `basis_date`, `basis_estimated`, `fut_price_source`, the
+index levels under `index`, `risk_per_unit` and `risk_per_lot`.
+
+`--entry PRICE` on a futures plan is the live futures price from Kite: the
+stop and target keep their distance in points from it. Give it before
+sizing. Without it, size a limit order at the estimate (`size.py --limit`):
+bharat-risk blocks a market entry on the bhavcopy estimate.
+
 ## What it never does
 
 It never places an order, never sizes a position, never widens a stop to make

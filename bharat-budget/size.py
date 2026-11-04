@@ -68,7 +68,10 @@ DEFAULTS = {
     "allow_fno": False,
     "allow_margin": False,
     "allow_short": False,
+    "margin_per_lot_inr": {},
+    "max_lots": 1,
 }
+FUT_INDEX = ("NIFTY", "BANKNIFTY")
 MAX_LEVERAGE = 5      # SEBI's minimum intraday margin is 20 % of the trade's value
 EPS = 1e-9
 FRESH_MINUTES = 15
@@ -184,9 +187,9 @@ def shares_for(inr, per_share):
     return u // p
 
 
-def costs_at(qty, buy, sell):
-    """Round-trip charges for qty shares bought at buy and sold at sell (Rs)."""
-    return india.round_trip(SEGMENT, qty, buy, sell)["total"] if qty > 0 else 0.0
+def costs_at(qty, buy, sell, segment=SEGMENT):
+    """Round-trip charges for qty units bought at buy and sold at sell (Rs)."""
+    return india.round_trip(segment, qty, buy, sell)["total"] if qty > 0 else 0.0
 
 
 def shares_after_costs(max_loss, risk, entry, stop):
@@ -242,6 +245,8 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     blocked = {str(b).upper() for b in (c.get("blocked") or [])}
     if sym in blocked:
         raise SizeError("%s is on your blocked list" % sym)
+    if plan.get("instrument") == "fut":
+        return size_futures(plan, c, sym, budget, limit, cash, entry_plan, stop, target)
 
     budget = float(budget if budget is not None else (c.get("budget") or 0))
     if budget <= 0:
@@ -341,20 +346,126 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     }
 
 
+def size_futures(plan, c, sym, budget, limit, cash, entry_plan, stop, target):
+    """Index futures: whole lots. Limits: max loss (lots x lot x risk + futures costs at the stop),
+    margin ((cash - buffer) / margin_per_lot_inr[symbol], never guessed), max_lots, and
+    max_fut_notional_inr if you set one. No position cap: a futures lot is worth far more than its margin."""
+    if not c.get("allow_fno"):
+        raise SizeError("futures are off: set \"allow_fno\": true in trader/config.json to size %s futures "
+                        "(F&O can lose more than the margin)" % sym)
+    if sym not in FUT_INDEX:
+        raise SizeError("P2 sizes NIFTY and BANKNIFTY index futures only, not %s" % sym)
+    lot = int(_f(plan.get("lot")) or 0)
+    if lot <= 0 or not plan.get("contract"):
+        raise SizeError("the futures plan needs its contract and lot (run bharat-entry --instrument fut, then bharat-exit)")
+    budget = float(budget if budget is not None else (c.get("budget") or 0))
+    if budget <= 0:
+        raise SizeError("no budget: pass --budget or set \"budget\" in trader/config.json (in rupees)")
+    buf_pct = float(c.get("cash_buffer_pct") or 0)
+    if not 0 <= buf_pct < 100:
+        raise SizeError("cash_buffer_pct must be between 0 and 100")
+    ref, ref_from = (india.tick_round(limit), "limit") if limit is not None else (round_paisa(entry_plan), "plan")
+    stop, target = round_paisa(stop), round_paisa(target)
+    if stop >= ref:
+        raise SizeError("the stop %s is not below the entry %s" % (_price(stop), _price(ref)))
+    if target <= ref:
+        raise SizeError("the target %s is not above the entry %s: make a new plan with bharat-exit"
+                        % (_price(target), _price(ref)))
+    risk_p, reward_p = int(round((ref - stop) * 100)), int(round((target - ref) * 100))
+    risk = risk_p / 100.0
+    cash_buffer = round(budget * buf_pct / 100.0, 2)
+    available = budget - cash_buffer
+    cash_note = "(budget %s - %s buffer)" % (money(budget), money(cash_buffer))
+    if cash is not None and cash - cash_buffer < available - 0.005:
+        available = cash - cash_buffer
+        cash_note = "(cash %s - %s buffer)" % (money(cash), money(cash_buffer))
+    available = max(round(available, 2), 0.0)
+
+    limits, refusal = [], None
+    max_loss = _f(c.get("max_loss_per_trade_inr"))
+    if max_loss:
+        n = 0
+        while (n + 1) * lot * risk + costs_at((n + 1) * lot, ref, stop, "fut") <= max_loss + EPS:
+            n += 1
+        limits.append({"name": "max loss", "lots": n, "how": "%s incl. costs: %d x %d x %s + %s costs = %s" % (
+            money(max_loss), n, lot, _price(risk), money(costs_at(n * lot, ref, stop, "fut")),
+            money(n * lot * risk + costs_at(n * lot, ref, stop, "fut")))})
+    margins = c.get("margin_per_lot_inr") or {}
+    m = _f(margins.get(sym)) if isinstance(margins, dict) else None
+    if not m or m <= 0:
+        limits.append({"name": "margin", "lots": 0, "how": "no figure for %s" % sym})
+        refusal = ("no margin figure for %s: set \"margin_per_lot_inr\": {\"%s\": RUPEES} in trader/config.json "
+                   "from Zerodha's margin calculator (zerodha.com/margin-calculator/SPAN). It is never guessed. "
+                   "No order." % (sym, sym))
+    else:
+        limits.append({"name": "margin", "lots": int(available // m + EPS), "how": "%s %s / %s a lot" % (
+            money(available), cash_note, money(m))})
+    max_lots = int(_f(c.get("max_lots")) or 1)
+    limits.append({"name": "max lots", "lots": max_lots, "how": "max_lots in the config"})
+    cap = _f(c.get("max_fut_notional_inr"))
+    if cap:
+        limits.append({"name": "max order", "lots": shares_for(cap, ref * lot),
+                       "how": "%s / (%d x %s)" % (money(cap), lot, _price(ref))})
+    for l in limits:
+        l["shares"] = l["lots"] * lot
+    lots = max(0, min(l["lots"] for l in limits))
+    bound = [l["name"] for l in limits if l["lots"] == lots]
+    for l in limits:
+        l["binds"] = l["name"] == bound[0]
+    qty = lots * lot
+    costs_stop = round(costs_at(qty, ref, stop, "fut"), 2)
+    costs_target = round(costs_at(qty, ref, target, "fut"), 2)
+    loss = round(qty * risk_p / 100.0 + costs_stop, 2)
+    gain = round(qty * reward_p / 100.0 - costs_target, 2)
+    if refusal is None and lots == 0:
+        if bound[0] == "max loss":
+            refusal = ("one lot (%d) risks %s plus %s costs = %s, more than your %s max loss per trade. No order."
+                       % (lot, money(lot * risk), money(costs_at(lot, ref, stop, "fut")),
+                          money(lot * risk + costs_at(lot, ref, stop, "fut")), money(max_loss)))
+        elif bound[0] == "margin":
+            refusal = ("one lot needs %s margin, more than the %s you have after the buffer. No order."
+                       % (money(m), money(available)))
+        else:
+            refusal = "your %s limit allows 0 lots. No order." % bound[0]
+    elif refusal is None and _f(c.get("min_reward_risk")) and reward_p < _f(c["min_reward_risk"]) * risk_p - EPS:
+        refusal = ("reward:risk %.2f is under your minimum %s, so bharat-risk would block it. No order."
+                   % (reward_p / float(risk_p), _num(c["min_reward_risk"])))
+    return {
+        "symbol": sym, "side": "buy", "setup": plan.get("setup", ""), "date": plan.get("date"),
+        "entry_time": plan.get("entry_time", ""), "entry_plan": round_paisa(entry_plan),
+        "entry": ref, "entry_from": ref_from, "stop": stop, "target": target,
+        "risk_per_share": risk, "reward_risk": round(reward_p / float(risk_p), 2),
+        "stop_label": plan.get("stop_label", ""), "target_label": plan.get("target_label", ""),
+        "budget": budget, "cash_buffer_pct": buf_pct, "cash_buffer": cash_buffer, "cash_available": available,
+        "mis_leverage": 1, "max_loss_per_trade_inr": max_loss, "limits": limits, "qty": qty, "lots": lots,
+        "bound_by": bound[0], "value": round(qty * ref, 2), "costs_at_stop": costs_stop,
+        "costs_at_target": costs_target, "max_loss": loss, "gain_at_target": gain,
+        "flat_by": plan.get("flat_by") or c.get("flat_by"), "order_type": "limit" if limit is not None else "market",
+        "refusal": refusal, "instrument": "fut", "contract": plan["contract"], "lot": lot,
+        "expiry": plan.get("expiry"), "margin_per_lot": m, "margin": round(lots * m, 2) if m else None,
+        "basis_estimated": bool(plan.get("basis_estimated")), "basis_date": plan.get("basis_date"),
+        "fut_price_source": plan.get("fut_price_source") or "bhavcopy",
+    }
+
+
 def bracket_order(s):
     """The one proposed order: an NSE intraday (MIS) buy with its stop-loss and take-profit."""
     if s["refusal"] or s["qty"] <= 0:
         return None
     o = {"symbol": s["symbol"], "exchange": "NSE", "product": "MIS", "side": "buy", "qty": str(int(s["qty"])),
          "type": s["order_type"], "time_in_force": "day"}
+    if s.get("instrument") == "fut":
+        o.update(symbol=s["contract"], exchange="NFO", instrument="fut", underlying=s["symbol"], lots=s["lots"],
+                 lot=s["lot"], expiry=s["expiry"], margin=s["margin"], basis_estimated=s["basis_estimated"],
+                 basis_date=s["basis_date"], fut_price_source=s["fut_price_source"])
     if s["order_type"] == "limit":
         o["limit_price"] = _price(s["entry"])
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "intraday trade")
-    why = ("%s on %s: %d shares, bound by your %s (%d x %s + %s costs = %s at the stop)"
-           % (setup, s["symbol"], s["qty"],
+    why = ("%s on %s: %d %s, bound by your %s (%d x %s + %s costs = %s at the stop)"
+           % (setup, s["symbol"], s["qty"], "units" if s.get("instrument") == "fut" else "shares",
               {"max loss": "%s max loss per trade" % money(s["max_loss_per_trade_inr"] or 0),
-               "position cap": "position cap", "max order": "max order",
-               "cash": "cash after the buffer"}[s["bound_by"]],
+               "position cap": "position cap", "max order": "max order", "margin": "margin",
+               "max lots": "max lots", "cash": "cash after the buffer"}[s["bound_by"]],
               s["qty"], _price(s["risk_per_share"]), money(s["costs_at_stop"]), money(s["max_loss"])))
     o.update({
         "order_class": "bracket",
@@ -369,7 +480,48 @@ def bracket_order(s):
     return o
 
 
+def fut_report(s, order, notes=()):
+    lines = ["%s futures buy (%s, expires %s, lot %d), %s, entry %s%s" % (
+        s["symbol"], s["contract"], s["expiry"], s["lot"], SETUP_WORDS.get(s["setup"], s["setup"] or "setup"),
+        _price(s["entry_plan"]), (" at " + s["entry_time"]) if s["entry_time"] else "")]
+    lines.append("Stop %s. Target %s. Risk %s a unit, %s a lot. Reward:risk %.2f." % (
+        _price(s["stop"]), _price(s["target"]), _price(s["risk_per_share"]),
+        money(s["risk_per_share"] * s["lot"]), s["reward_risk"]))
+    if s["fut_price_source"] != "user" and s["order_type"] == "market":
+        lines.append("The entry is the basis estimate, not a live price: bharat-risk blocks it as a market order. "
+                     "Use --limit (a limit at the plan's entry), or give the live price (bharat-exit --entry).")
+    if s["basis_estimated"]:
+        lines.append("The futures price is ESTIMATED from an old basis (%s): bharat-risk blocks a market entry "
+                     "on it. Give the live price (bharat-exit --entry) first." % s["basis_date"])
+    lines += list(notes) + ["", "Limits (whole lots; the smallest one wins):"]
+    for l in s["limits"]:
+        lines.append("  %-10s %-66s %3d lot%s%s" % (l["name"], l["how"], l["lots"], "" if l["lots"] == 1 else "s",
+                                                    "  <- binds" if l["binds"] else ""))
+    lines.append("")
+    if order is None:
+        lines += ["No order: " + s["refusal"], "Education and tooling, not financial advice."]
+        return "\n".join(lines)
+    lines.append("Size: %d lot%s of %s = %d units, %s notional, %s margin blocked (MIS = NRML for F&O)." % (
+        s["lots"], "" if s["lots"] == 1 else "s", s["contract"], s["qty"], money(s["value"]), money(s["margin"])))
+    lines.append("Costs, round trip (Zerodha futures): %s at the stop, %s at the target." % (
+        money(s["costs_at_stop"]), money(s["costs_at_target"])))
+    lines.append("Max loss at the stop: %d x %s + %s costs = %s. At the target, after costs: %s." % (
+        s["qty"], _price(s["risk_per_share"]), money(s["costs_at_stop"]), money(s["max_loss"]),
+        money(s["gain_at_target"])))
+    lines.append("Futures are leveraged: a gap can lose more than the margin, and more than the max loss.")
+    lines.append("")
+    lines.append("Proposed bracket order (nothing has been placed):")
+    lines.append("  buy %s %s on NFO, MIS, %s, day, take-profit %s, stop-loss %s" % (
+        order["qty"], order["symbol"], "limit %s" % order["limit_price"] if order["type"] == "limit" else "market",
+        order["take_profit_limit_price"], order["stop_loss_stop_price"]))
+    lines += ["", "Next: bharat-risk checks it, then bharat-broker asks you yes or no.",
+              "Education and tooling, not financial advice."]
+    return "\n".join(lines)
+
+
 def plan_report(s, order, notes=()):
+    if s.get("instrument") == "fut":
+        return fut_report(s, order, notes)
     lines = []
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "setup")
     lines.append("%s buy, %s, entry %s%s" % (s["symbol"], setup, _price(s["entry_plan"]),

@@ -83,8 +83,80 @@ OPEN = india.OPEN
 CLOSE = india.CLOSE
 
 
+FUT_INDEX = ("NIFTY", "BANKNIFTY")
+BHAV_URL = "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_%s_F_0000.csv.zip"
+
+
 class EntryError(Exception):
     pass
+
+
+# ---------------------------------------------------------------- index futures
+
+def load_bhavcopy(path, day):
+    """F&O bhavcopy rows from PATH, or downloaded for the last session before day."""
+    if path:
+        try:
+            with open(path, "rb") as fh:
+                return india.parse_bhavcopy(fh.read())
+        except (OSError, ValueError, KeyError) as e:
+            raise EntryError("cannot read the bhavcopy %s: %s" % (path, e))
+    last = india.prev_trading_day(day)
+    try:
+        return india.parse_bhavcopy(india.nse_get(BHAV_URL % last.strftime("%Y%m%d"), want_json=False, warm=False))
+    except (india.NSEError, ValueError, KeyError) as e:
+        raise EntryError("could not get the F&O bhavcopy for %s (%s): save it and pass --bhavcopy FILE" % (last, e))
+
+
+def future_leg(rows, symbol, day, index_price, fut_price=None):
+    """The futures contract for a signal on the index: contract, lot, basis and price.
+    price = index price x (futures close / index close) from the bhavcopy, tick-rounded;
+    a fut_price the user read off Kite wins."""
+    f = india.front_future(rows, symbol, day)
+    if not f:
+        raise EntryError("no %s future after %s in the bhavcopy" % (symbol, day))
+    ratio = india.basis_ratio(f)
+    last = india.prev_trading_day(day)
+    stale = last is not None and f["date"] < last
+    warnings = []
+    if fut_price is not None:
+        price, source = round(float(fut_price), 2), "user"
+    else:
+        price, source = (india.tick_round(index_price * ratio) if index_price else None), "bhavcopy"
+        if stale:
+            warnings.append("The basis is from %s, older than the last session (%s): the futures price is "
+                            "estimated from %s. Read the live price off Kite and pass --fut-price." % (
+                                f["date"], last, f["date"]))
+    if india._trading_days_between(day, f["expiry"]) == 1:
+        nxt = india.front_future(rows, symbol, day, roll_days=1)
+        warnings.append("%s expires on the next trading day (%s): it rolls over. A new entry should be in %s." % (
+            f["contract"], f["expiry"], nxt["contract"] if nxt else "the next month"))
+    return {"contract": f["contract"], "expiry": f["expiry"].isoformat(), "lot": f["lot"], "basis_ratio": ratio,
+            "basis_date": f["date"].isoformat(), "price": price, "source": source,
+            "estimated": bool(stale and source == "bhavcopy"), "warnings": warnings}
+
+
+def attach_future(res, a, rows=None):
+    """For --instrument fut, add res["future"] (the signal itself stays on the index)."""
+    if a.instrument != "fut":
+        return
+    day = datetime.date.fromisoformat(res["date"])
+    t = res.get("trigger")
+    res["instrument"] = "fut"
+    res["future"] = future_leg(rows if rows is not None else load_bhavcopy(a.bhavcopy, day), res["symbol"], day,
+                               t["price"] if t else None, a.fut_price)
+
+
+def future_lines(f):
+    if not f:
+        return []
+    out = ["Futures: %s (expires %s, lot %d). %s" % (
+        f["contract"], f["expiry"], f["lot"],
+        ("Price Rs %.2f, given by you." % f["price"]) if f["source"] == "user" else
+        ("Price about Rs %.2f = the index x %.6f, the basis from the %s bhavcopy; the basis moves during the "
+         "day, so the fill will differ." % (f["price"], f["basis_ratio"], f["basis_date"])) if f["price"] else
+        ("Basis %.6f from the %s bhavcopy." % (f["basis_ratio"], f["basis_date"])))]
+    return out + ["WARNING: " + w for w in f["warnings"]]
 
 
 # ---------------------------------------------------------------- time
@@ -520,7 +592,8 @@ def entry_doc(res, now_utc):
             "interval": res["interval"],
             "opening_range": {"high": orr["high"], "low": orr["low"], "minutes": orr["minutes"]} if orr else None,
             "source": "yahoo", "checked_at": iso(now_utc), "reason": res.get("reason"),
-            "prev_close": res.get("prev_close"), "band": res.get("band"), "near_band": res.get("near_band")}
+            "prev_close": res.get("prev_close"), "band": res.get("band"), "near_band": res.get("near_band"),
+            "instrument": res.get("instrument", "eq"), "future": res.get("future")}
 
 
 def write_json(path, doc):
@@ -738,6 +811,13 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
 
 # ---------------------------------------------------------------- commands
 
+def _check_instrument(a, sym):
+    if a.instrument == "fut" and sym not in FUT_INDEX:
+        raise EntryError("--instrument fut is for NIFTY or BANKNIFTY index futures (P2), not %s" % sym)
+    if a.fut_price is not None and a.fut_price <= 0:
+        raise EntryError("--fut-price must be a price above 0")
+
+
 def _opts(a, cfg):
     if a.side in ("sell", "short"):
         raise EntryError("P1 plans longs only: no short entries. Watch for a buy (--side buy) instead.")
@@ -767,14 +847,16 @@ def cmd_check(a):
     cfg = read_config(a.config)
     opts = _opts(a, cfg)
     sym = a.symbol.upper()
+    _check_instrument(a, sym)
     chart, now = _load(a, sym, parse_now(a.now) if a.now else None)
     res = evaluate(chart, now, **opts)
+    attach_future(res, a)
     if a.write:
         write_json(a.write, entry_doc(res, now))
     if a.json:
         print(json.dumps(public(res), indent=2))
     else:
-        for line in describe(res):
+        for line in describe(res) + future_lines(res.get("future")):
             print(line)
         if a.write:
             print("Wrote %s (status %s)." % (a.write, res["status"]))
@@ -785,6 +867,7 @@ def cmd_watch(a):
     cfg = read_config(a.config)
     opts = _opts(a, cfg)
     sym = a.symbol.upper()
+    _check_instrument(a, sym)
     if a.every <= 0:
         raise EntryError("--every must be above 0 seconds")
     start = parse_now(a.now) if a.now else None
@@ -805,7 +888,14 @@ def cmd_watch(a):
         t = parse_hhmm(a.until, "--until")
         until = datetime.datetime.combine(to_local(now_fn()).date(), t)
 
+    rows = None
+    if a.instrument == "fut":  # fetched now: a download failure at the trigger would lose the signal
+        rows = load_bhavcopy(a.bhavcopy, to_local(now_fn()).date())
+
     def on_trigger(res, now):
+        attach_future(res, a, rows)
+        for line in future_lines(res.get("future")):
+            print(line, flush=True)
         write_json(a.out, entry_doc(res, now))
         print("Wrote %s." % a.out, flush=True)
 
@@ -820,6 +910,8 @@ def cmd_watch(a):
 def cmd_watchlist(a):
     cfg = read_config(a.config)
     opts = _opts(a, cfg)
+    if a.instrument != "eq":
+        raise EntryError("watchlist is for stocks; check NIFTY or BANKNIFTY futures with: check NIFTY --instrument fut")
     if not os.path.exists(a.watchlist):
         raise EntryError("no watchlist at %s: run /bharat-scanner first (it writes the hits there)" % a.watchlist)
     try:
@@ -887,6 +979,10 @@ def main(argv=None):
         p.add_argument("--now", help='pretend it is this IST time, e.g. "2026-10-19 10:15"')
         p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON (.json/.json.gz) or a folder")
         p.add_argument("--config", default="trader/config.json")
+        p.add_argument("--instrument", choices=["eq", "fut"], default="eq",
+                       help="fut: NIFTY/BANKNIFTY index futures; the signal is read on the index")
+        p.add_argument("--bhavcopy", metavar="FILE", help="F&O bhavcopy (default: download the last session's)")
+        p.add_argument("--fut-price", type=float, help="the futures price you see on Kite (beats the basis estimate)")
 
     p = sub.add_parser("check", help="the setup's status right now")
     p.add_argument("symbol")

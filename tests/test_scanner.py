@@ -334,5 +334,24 @@ class Cli(unittest.TestCase):
         self.assertEqual(json.loads(text)["scanned"], 2)
 
 
+
+class IndexFutures(unittest.TestCase):
+    def test_orb_on_the_indices_lists_the_futures_example(self):
+        d, cwd = tempfile.mkdtemp(), os.getcwd()
+        try:
+            os.chdir(d)                       # the scan writes trader/watchlist.json here
+            os.mkdir("charts")
+            shutil.copy(os.path.join(FIX, "p2", "yahoo-NSEI-5m.json"), os.path.join("charts", "NIFTY.json"))
+            shutil.copy(os.path.join(FIX, "p2", "yahoo-NSEBANK-5m.json"), os.path.join("charts", "BANKNIFTY.json"))
+            code, text, err = run(["orb", "--symbols", "NIFTY,BANKNIFTY", "--offline", "charts",
+                                   "--now", "2026-10-21 10:15", "--min-price", "0", "--json"])
+        finally:
+            os.chdir(cwd)
+            shutil.rmtree(d)
+        hits = {h["symbol"]: h for h in json.loads(text)["hits"]}
+        n = hits["NIFTY"]
+        self.assertEqual((n["price"], n["at"], n["or_high"], n["or_low"]),
+                         (EX.FUT_TRIGGER_CLOSE, EX.FUT_TRIGGER_AT, EX.FUT_OR_HIGH, EX.FUT_OR_LOW))
+
 if __name__ == "__main__":
     unittest.main()

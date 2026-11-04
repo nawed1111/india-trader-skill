@@ -67,7 +67,7 @@ batch that is fine order by order but breaks a limit together is caught.
 | check | blocks when |
 | --- | --- |
 | format | no symbol, side not buy or sell, no whole-share qty (NSE has no rupee-amount orders), a limit order with no limit price, a bracket that misses its stop-loss or take-profit |
-| asset | an F&O contract (`NIFTY26NOVFUT`, `...CE`, `...PE`) while `allow_fno` is false (P1 is cash stocks only); anything that is not an NSE symbol |
+| asset | an F&O contract (`NIFTY26NOVFUT`, `...CE`, `...PE`) while `allow_fno` is false; anything that is not an NSE symbol |
 | short | a sell of more than you hold (`allow_short` false) |
 | product | (entries) anything but MIS: P1 plans intraday trades only |
 | blocked | (entries) the symbol is on the `blocked` list |
@@ -157,6 +157,28 @@ passes, even after the 14:45 entry cutoff: it is an exit.
 - Every number comes from the config, the order, the portfolio, the prices or the broker log.
 - Free Yahoo prices are unofficial and can lag; the broker's price is the one that fills, and a
   stop can fill worse than its price in a fast market or a band freeze.
+
+## Index futures (P2)
+
+For an NFO order (`instrument: fut`), with `allow_fno` on:
+
+- **format** the qty must be whole lots (`lot` on the order); an entry
+  without a lot size is blocked.
+- **margin** lots x `margin_per_lot_inr[underlying]` must leave the cash
+  buffer; no figure blocks. It replaces the cash, position and max-order
+  checks (`max_fut_notional_inr` caps the notional if set).
+- **lots** more than `max_lots`, counting the lots already held, blocks.
+- **entry** a market order whose futures price is the bhavcopy estimate
+  blocks (the basis can move 75 points in a session): send a limit order or
+  give the live price (`fut_price_source: user`).
+- **expiry** a new entry in a contract that expires today blocks and names
+  the next one ("trade NIFTY26DECFUT").
+- **basis** a market entry whose futures price is estimated from an old
+  bhavcopy blocks.
+- **costs** use Zerodha's futures charges.
+
+The F&O ban list does not apply to index futures (it lists stocks only).
+Getting out is never blocked: these are entry checks.
 
 ## What it never does
 

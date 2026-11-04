@@ -531,12 +531,38 @@ def gather(a):
                 "interval": a.interval or doc.get("interval") or "5m",
                 "or_high": a.or_high if a.or_high is not None else orr.get("high"),
                 "or_low": a.or_low if a.or_low is not None else orr.get("low"),
-                "or_minutes": orr.get("minutes") or a.or_minutes, "source": path}
+                "or_minutes": orr.get("minutes") or a.or_minutes, "source": path,
+                "instrument": doc.get("instrument") or "eq", "future": doc.get("future")}
+        if info["instrument"] == "fut" and not info["future"]:
+            raise PlanError("%s is a futures entry with no future block: re-run bharat-entry --instrument fut" % path)
+        if info["instrument"] == "fut":
+            if doc.get("status") != "triggered":
+                raise PlanError("%s is a futures entry that has not triggered: plan it once the index triggers" % path)
+            info["entry"] = doc.get("price")  # the levels come from the index; --entry is the futures fill
+            if a.entry is not None:
+                info["future"] = dict(info["future"], price=a.entry, source="user", estimated=False)
         if not info["symbol"] or info["entry"] is None:
             raise PlanError("%s has no symbol or price" % path)
     if info["interval"] not in INTERVALS:
         raise PlanError("interval is 5m or 1m")
     return info
+
+
+def futures_levels(c, fut):
+    """The index plan moved to the futures contract: the stop and target keep their distance
+    from the entry in points, times the basis (so a futures price you gave keeps the same risk)."""
+    ratio = D(repr(fut["basis_ratio"]))
+    entry_f = cents(fut["price"]) if fut.get("price") is not None else tick_near(c["entry"] * ratio)
+    stop = tick_down(entry_f - (c["entry"] - c["stop"]) * ratio)
+    target = tick_up(entry_f + (c["target"] - c["entry"]) * ratio)
+    risk = entry_f - stop
+    return {"instrument": "fut", "contract": fut["contract"], "expiry": fut["expiry"], "lot": int(fut["lot"]),
+            "basis_ratio": fut["basis_ratio"], "basis_date": fut["basis_date"],
+            "basis_estimated": bool(fut.get("estimated")), "fut_price_source": fut.get("source") or "bhavcopy",
+            "index": {"entry": float(c["entry"]), "stop": float(c["stop"]), "target": float(c["target"])},
+            "entry": float(entry_f), "stop": float(stop), "target": float(target),
+            "risk_per_share": float(risk), "risk_per_unit": float(risk), "risk_per_lot": float(risk * int(fut["lot"])),
+            "reward_risk": float(((target - entry_f) / risk).quantize(CENT, rounding=ROUND_HALF_UP))}
 
 
 def build_plan(a, now_utc):
@@ -582,6 +608,8 @@ def build_plan(a, now_utc):
             "target": float(c["target"]), "target_r": float(c["target_r"]), "target_label": c["target_label"],
             "risk_per_share": float(c["risk"]), "reward_risk": float(c["reward_risk"]), "flat_by": flat_by,
             "stop_detail": c["stop_detail"], "created_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"), "note": NOTE}
+    if info.get("instrument") == "fut":
+        plan.update(futures_levels(c, info["future"]))
     if atr is not None:
         plan["atr"] = round(atr, 4)
         plan["atr_bars"] = atr_n
@@ -618,7 +646,21 @@ def describe(plan):
     out.append("  Stop          %s  %s%s" % (money(plan["stop"]), plan["stop_label"],
                                              (": " + plan["stop_detail"]) if plan.get("stop_detail") else ""))
     out.append("  Target        %s  %s" % (money(plan["target"]), plan["target_label"]))
-    out.append("  Risk a share  %s (%s%% of the entry)" % (money(plan["risk_per_share"]), pct))
+    if plan.get("instrument") == "fut":
+        ix = plan["index"]
+        out.insert(1, "  Contract      %s, expires %s, lot %d; the signal and the levels come from the index "
+                      "(entry %s, stop %s, target %s) x basis %.6f from %s%s" % (
+                          plan["contract"], plan["expiry"], plan["lot"], num(D(ix["entry"])), num(D(ix["stop"])),
+                          num(D(ix["target"])), plan["basis_ratio"], plan["basis_date"],
+                          ", ESTIMATED (old basis)" if plan["basis_estimated"] else ""))
+        out.append("  Risk a unit   %s (%s%% of the entry); Risk a lot %s" % (
+            money(plan["risk_per_unit"]), pct, money(plan["risk_per_lot"])))
+        if plan["fut_price_source"] != "user":
+            out.append("  The futures entry is an estimate from the basis: give the live Kite price with --entry "
+                       "(the stop and target keep their points), or size a limit order at it; bharat-risk "
+                       "blocks a market entry on the estimate.")
+    else:
+        out.append("  Risk a share  %s (%s%% of the entry)" % (money(plan["risk_per_share"]), pct))
     out.append("  Reward:risk   %s" % ratio(plan["reward_risk"]))
     out.append("  Flat by       %s IST, win or lose: no overnight hold" % plan["flat_by"])
     out.append("Set before the entry. If price hits the stop, you are out; never move it further away.")

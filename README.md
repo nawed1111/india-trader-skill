@@ -122,6 +122,66 @@ An example, on real data: RELIANCE, Monday 19 October 2026 (2026-10-19).
    target is an alert, not a broker order) and at 15:15 to flatten whatever
    is still open, before the broker's 15:20 square-off.
 
+## Index futures
+
+NIFTY and BANKNIFTY futures, intraday, in whole lots. Off until you set
+`"allow_fno": true`. Yahoo has no free intraday futures bars, so the signal
+is read on the index itself, and the futures price is the index times the
+basis (futures close / index close) from NSE's F&O bhavcopy of the last
+session, or the price you read off Kite.
+
+An example, on real data: NIFTY, Wednesday 21 October 2026 (2026-10-21), the
+session after the Dussehra holiday.
+
+1. **`/bharat-entry`** `check NIFTY --instrument fut`: the index's opening
+   range was 22,981.35 to 23,086.75; the 9:30 bar closed at 23,115.65, the
+   trigger at 9:35 AM. The contract is NIFTY26OCTFUT (expires 2026-10-27,
+   lot 65). The basis comes from the 2026-10-19 bhavcopy (20 October was a
+   holiday): 22,895.20 / 22,888.95 = 1.000273, so the futures price is about
+   23,121.95. The basis moves during the day (it was 0.997017 at the 21
+   October close, 75 points lower), so this is an estimate: give the live
+   price with `--fut-price`, or send a limit order at it.
+2. **`/bharat-exit`** moves the index plan to the future: the index stop is
+   the range midpoint, 23,034.05, 81.60 points under the entry. In futures
+   points that is a stop at 23,040.30 and a 1R target at 23,203.60: 81.65 a
+   unit, Rs 5,307.25 a lot. A bhavcopy older than the last session marks the
+   price as estimated.
+3. **`/bharat-timemachine`** replays the index's own bars; a constant basis
+   moves every level the same way, so the odds are the index's, and it
+   reports the prices at 15:15 in futures points.
+4. **`/bharat-budget`** sizes in lots. With the Rs 2,00,000 account, a margin
+   of Rs 1,75,953 a lot (`margin_per_lot_inr`, entered by hand from Zerodha's
+   margin calculator on 4 November 2026; never guessed, and no figure means
+   no order) and a Rs 7,000 max loss: 1 lot, 65 units. Futures charges at the
+   stop are Rs 894.53 (STT 0.05 % on the sell, NSE 0.00173 %, stamp 0.002 %),
+   so the loss at the stop is 65 x 81.65 + 894.53 = Rs 6,201.78. On this
+   account that is 3 % in one trade: the default Rs 1,000 max loss refuses
+   any NIFTY lot, and the daily loss limit must be raised too. The order
+   (`size.py --limit`) is a limit buy of 65 NIFTY26OCTFUT at 23,121.95 on
+   NFO, MIS, notional Rs 15.03 lakh.
+5. **`/bharat-risk`** blocks F&O unless `allow_fno` is on, a qty that is not
+   whole lots, a new entry in a contract that expires today (it names the
+   next one), a market entry on the basis estimate (it can be 75 points off:
+   use a limit order or give the live price), a margin above your cash after
+   the buffer, and more than `max_lots` (default 1, lots held included).
+6. **`/bharat-broker`** sends two Kite calls on NFO: the entry, then one SL-M
+   stop (NSE dropped SL-M for options, not futures), each with
+   `market_protection: -1`. Exchanges reject API market and SL-M orders
+   without it since 1 April 2026; equity orders carry it too.
+7. **`/bharat-alerts`** `add --from-plan` sets the stop and target alerts on
+   the index levels (the quotes are the index) and an expiry alert at 9:15
+   on the contract's expiry day and the trading day before. The expiry dates
+   come from the bhavcopy, never from weekday rules: NIFTY26NOVFUT expires on
+   Monday 23 November because 24 November is a holiday.
+
+**F&O fine print.** Futures are leveraged: one NIFTY lot is about Rs 15 lakh
+of exposure for under Rs 2 lakh of margin, and a gap or a fast market can
+lose more than the margin, and more than the max loss. Intraday futures
+margin is the full SPAN plus exposure (Zerodha gives no extra MIS leverage on
+F&O). SEBI's study found that about 9 in 10 individual F&O traders lost
+money. F&O profits are taxed as non-speculative business income. Not
+financial or tax advice.
+
 ## The tools
 
 All standard-library Python. The data tools read public endpoints and are
@@ -141,6 +201,7 @@ python3 bharat-risk/check.py                                           # PASS / 
 python3 bharat-broker/ticket.py show                                   # the tickets, READY or not
 python3 bharat-alerts/alerts.py add --from-plan                        # stop, target, flat by 15:15
 python3 bharat-alerts/alerts.py check                                  # rings what hit, once
+python3 bharat-entry/entry.py check NIFTY --instrument fut             # index signal, futures price from the bhavcopy
 python3 bharat-analyst/results.py RELIANCE                             # quarters, margins, growth
 python3 bharat-insider/insider.py new                                  # insider trades, deals, FII/DII
 ```

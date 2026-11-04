@@ -27,3 +27,27 @@ MAX_LOSS_LIMIT = 1000   # max loss per trade
 QTY = 73
 COSTS_AT_STOP = 78.88
 MAX_LOSS = 987.73       # 73 x 12.45 + 78.88
+
+# Index futures (P2): NIFTY, Wed 21 Oct 2026, the session after the Dussehra holiday
+FUT_SYMBOL = "NIFTY"
+FUT_DATE = "2026-10-21"
+FUT_OR_HIGH = 23086.75
+FUT_OR_LOW = 22981.35
+FUT_TRIGGER_AT = "9:35 AM"
+FUT_TRIGGER_CLOSE = 23115.65   # the index
+FUT_CONTRACT = "NIFTY26OCTFUT"
+FUT_EXPIRY = "2026-10-27"
+FUT_LOT = 65
+FUT_BASIS_DATE = "2026-10-19"  # the last session's bhavcopy
+FUT_BASIS = 22895.20 / 22888.95
+FUT_PRICE = 23121.95           # 23115.65 x basis, tick 0.05
+FUT_INDEX_STOP = 23034.05      # bharat-exit: the index's opening-range midpoint
+FUT_STOP = 23040.30            # the futures stop: entry - 81.60 x basis, tick down
+FUT_TARGET = 23203.60          # 1R in futures points, tick up
+FUT_RISK_PER_UNIT = 81.65
+FUT_RISK_PER_LOT = 5307.25     # 81.65 x 65
+FUT_MARGIN_PER_LOT = 175953    # NIFTY, Zerodha's SPAN calculator on 4 Nov 2026 (the example's figure, entered by hand)
+FUT_MAX_LOSS_LIMIT = 7000      # the futures example's max loss per trade
+FUT_LOTS = 1
+FUT_COSTS_AT_STOP = 894.53
+FUT_MAX_LOSS = 6201.78         # 65 x 81.65 + 894.53

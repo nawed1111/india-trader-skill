@@ -152,6 +152,15 @@ should hear before `/bharat-budget` sizes it.
 - Always say the seed, so any run can be repeated.
 - One plan per run. A changed entry, stop, target or date is a new run.
 
+## Index futures (P2)
+
+A futures plan replays the index's own bars with the plan's index levels
+(`plan.index`, or the futures levels divided by `basis_ratio`). A constant
+basis moves every level the same way, so the odds and R are the index's.
+The report adds the futures view: "futures price = index x RATIO from
+DATE", the futures entry, stop and target, and the price at the end of the
+replay in futures points.
+
 ## What it never does
 
 It never places an order, never sizes a position, never changes the plan,

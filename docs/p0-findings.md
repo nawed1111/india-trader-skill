@@ -81,3 +81,52 @@ The remaining example numbers (stop, target, size, Time Machine odds) are comput
 4. **bharat-analyst** reads `integrated-filing-results` plus its XBRL (`in-capmkt:`), not the older results list.
 5. **bharat-entry:** opening-range volume skips the 9:15 bar (always 0 on Yahoo).
 6. **bharat-broker live mode:** needs a self-hosted Kite MCP server or the Kite Connect API, run from a whitelisted static IP. The hosted Kite MCP is read-only for orders.
+
+# P2 findings
+
+Checked 2026-11-04. Raw files are in `tests/fixtures/p2/`. Re-run with
+`python3 -I tools/probe.py --p2 [--days 20261016,20261019,20261021]`.
+
+## Data
+
+| Source | Status | Notes |
+| --- | --- | --- |
+| Yahoo 5m `^NSEI`, `^NSEBANK` (60d) | OK | Index volume is 0 on every bar, so a volume filter can never pass on an index. |
+| F&O bhavcopy 16, 19, 21 Oct 2026 | OK | Old days still download from the archive. Futures rows: `FinInstrmTp` `IDF`; `NewBrdLotQty` carries the lot. |
+| `fo_mktlots.csv` | OK | **Only current and future months** (NOV-26 to JUN-31 on 4 Nov). An expired contract's month (OCT-26) is gone, so a past contract's lot must come from its bhavcopy row. NIFTY has a JUN-31 column (65); BANKNIFTY is blank from DEC-27. |
+
+## Costs (futures)
+
+`zerodha-calc-fut.json`: three cases from Zerodha's calculator (`cal_futures` read on the page). Same rounding as intraday: STT (0.05% sell) and stamp (0.002% buy) to the whole rupee, brokerage per order capped at Rs 20, exchange 0.00173% plus IPFT 0.0001% each to 2 dp, SEBI to 2 dp, GST 18%. `india.round_trip("fut", ...)` already matches all three to the paisa; `RATES["fut"]` needs no change.
+
+## Orders and margin
+
+- **SL-M on NFO futures: allowed.** NSE stopped SL-M for options only (27 Sep 2021; Zerodha blocked it for index options from 20 Sep 2021). BSE dropped SL-M for everything (BFO is out of scope). So index futures keep the SL-M stop; the SL (stop-limit) variant is not needed in P2. It is needed in P3 (options).
+- **Market protection is mandatory for API orders (exchange rule since 1 Apr 2026).** Kite rejects MARKET and SL-M orders with `market_protection` 0 or missing. Values: above 0 up to 100 (percent) or `-1` (automatic). **This also hits P1:** `bharat-broker/ticket.py` sends MARKET entries and SL-M stops with no `market_protection`, so live equity orders would be rejected today.
+- **Kite `place_order` for NFO:** `variety: regular`, `exchange: NFO`, `tradingsymbol` = the contract (`NIFTY26OCTFUT`), `transaction_type`, `order_type`, `quantity` in units (lots x lot), `product: MIS` (or NRML), `trigger_price` for SL/SL-M, `market_protection` for MARKET/SL-M. Optional `autoslice` for orders above the freeze limit.
+- **MIS margin = NRML margin** (Zerodha bulletin, 4 Nov 2026: "Index F&O 1X (100% of NRML margins (SPAN + Exposure))"). Auto square-off for index derivatives is 3:26 PM; `flat_by` 15:15 is ahead of it.
+- **Margin on 4 Nov 2026** (Zerodha SPAN calculator, 1 lot, buy; README example only, never a default): NIFTY26NOVFUT Rs 1,75,953 (SPAN 1,45,038 + exposure 30,915); BANKNIFTY26NOVFUT Rs 1,89,482 (SPAN 1,56,143 + exposure 33,339).
+- Seen in passing for P3: the NIFTY weekly option expiring in the 10 Nov holiday week expires Monday 9 Nov.
+
+## Worked example
+
+**NIFTY, Wednesday 21 Oct 2026** (the session after the 20 Oct Dussehra holiday). 19 Oct is not usable: NIFTY broke down that day and bharat-entry is long-only.
+
+| Bar (IST) | Open | High | Low | Close |
+| --- | --- | --- | --- | --- |
+| 9:15 | 23016.00 | 23063.35 | **22981.35** | 23039.20 |
+| 9:20 | 23040.15 | 23085.60 | 23036.80 | 23076.60 |
+| 9:25 | 23076.85 | **23086.75** | 23064.25 | 23079.85 |
+| 9:30 | 23080.95 | 23118.30 | 23069.20 | **23115.65** |
+
+- Opening range 22981.35 to 23086.75; trigger the 9:30 bar, close 23115.65, known at 9:35 (`entry.py check NIFTY --now "2026-10-21 09:35"` prints it).
+- Contract: **NIFTY26OCTFUT**, expiry Tue 27 Oct 2026, lot 65 (bhavcopy row; `fo_mktlots.csv` no longer has OCT-26).
+- Basis from the last session's bhavcopy (**19 Oct**, since 20 Oct was a holiday): close 22895.20 / underlying 22888.95 = **1.000273**. Futures price at the trigger: 23115.65 x 1.000273 = 23121.96, tick-rounded **23121.95**. One lot is Rs 15.03 lakh notional.
+- Stale-basis fixture: the 16 Oct bhavcopy is two sessions old on 21 Oct (NIFTY26OCTFUT 23119.20 / 23146.15 = 0.998836).
+- **The basis moves a lot in one session.** The 21 Oct close basis was 22743.30 / 22811.35 = 0.997017. Priced with that, the trigger is 23046.69, 75 points (Rs 4,893 a lot) under the estimate from 19 Oct. The estimated futures price is fine for planning the stop distance in points, but not as an entry price.
+
+## What this changes in the plan
+
+1. **Task 2, `lot_size`:** the bhavcopy row's lot is the contract's lot; `fo_mktlots.csv` covers months the bhavcopy has no row for (a live plan for a new month). The planned failing case `NIFTY 2031-06` exists (65); use BANKNIFTY Dec 2027 (blank) or NIFTY Jul 2031 (no column).
+2. **Task 8:** keep SL-M for futures (the SL variant and `stop_limit_ticks` are not needed until P3). Add `market_protection: -1` to every MARKET and SL-M Kite call, equity included (a P1 fix).
+3. **Tasks 3, 4, 7:** the example is 21 Oct, not 19 Oct; the previous session is 19 Oct; the 16 Oct bhavcopy is the stale one. Given the 75-point basis swing, the futures stop and target should be carried as points from the entry (re-anchored on the fill), and the ticket should say the entry price is estimated.

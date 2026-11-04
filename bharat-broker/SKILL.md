@@ -112,6 +112,19 @@ user short, so the ticket sends:
    `trigger_price` at the stop. The same yes covers it: it only limits the
    loss. Claude's card asks for each call.
 
+Every MARKET and SL-M call carries `market_protection: -1` (Kite's
+automatic protection). Since 1 April 2026 the exchanges reject API market
+and SL-M orders without it.
+
+**Index futures (P2).** The same two calls with `exchange` NFO,
+`tradingsymbol` the contract (`NIFTY26OCTFUT`) and `quantity` in units
+(lots x lot). NSE stopped SL-M for options only, so the futures stop is
+SL-M too. Paper fills charge Zerodha's futures rates and move only the
+charges and the P&L through the cash (the margin is blocked, not spent). A
+paper futures fill price is the index price x the plan's `basis_ratio`, or
+the price on Kite, never the index price itself. `flatten --symbol
+NIFTY26OCTFUT` builds an NFO sell, with the lot from the plan.
+
 The target is an alert (`/bharat-alerts`). Taking it is a new sell ticket
 (through bharat-risk and a new yes), after cancelling the open SL-M stop.
 

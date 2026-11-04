@@ -23,10 +23,11 @@ REL_CALL = {"symbol": "RELIANCE", "exchange": "NSE", "product": "MIS", "side": "
 REL_PLAIN = ("BUY 73 RELIANCE, market, good for today / stop-loss 1215.35 / take-profit 1240.25 / max loss about "
              "Rs 987.73 with costs if the stop fills at 1215.35 (it can fill worse in a fast market or a band freeze)")
 KITE_ENTRY = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "RELIANCE", "product": "MIS",
-              "validity": "DAY", "transaction_type": "BUY", "quantity": 73, "order_type": "MARKET"}
+              "validity": "DAY", "transaction_type": "BUY", "quantity": 73, "order_type": "MARKET",
+              "market_protection": -1}
 KITE_STOP = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "RELIANCE", "product": "MIS",
              "validity": "DAY", "transaction_type": "SELL", "quantity": 73, "order_type": "SL-M",
-             "trigger_price": 1215.35}
+             "trigger_price": 1215.35, "market_protection": -1}
 
 
 def rel(**over):
@@ -74,6 +75,7 @@ class TicketShape(unittest.TestCase):
         self.assertNotIn(1240.25, [c["input"].get("price") for c in calls])
         lim = ticket.kite_calls(rel(type="limit", limit_price="1227.80"))[0]["input"]
         self.assertEqual((lim["order_type"], lim["price"]), ("LIMIT", 1227.8))
+        self.assertNotIn("market_protection", lim)  # a limit order has its own price protection
         flat = {"symbol": "RELIANCE", "exchange": "NSE", "product": "MIS", "side": "sell", "qty": "73",
                 "type": "market", "time_in_force": "day"}
         self.assertEqual(len(ticket.kite_calls(flat)), 1)
@@ -99,6 +101,56 @@ class DesktopConfig(unittest.TestCase):
             self.assertIn("NEVER_IN_CHAT", server["env"][k])
         for words in ("self-hosted", "static IP", "Needs approval"):
             self.assertIn(words, doc["_note"])
+
+
+import example_values as EX  # noqa: E402
+FUT = {"symbol": EX.FUT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "buy", "qty": "65", "type": "market",
+       "time_in_force": "day", "order_class": "bracket", "take_profit_limit_price": "23203.60",
+       "stop_loss_stop_price": "23040.30", "instrument": "fut", "underlying": "NIFTY", "lots": 1, "lot": 65,
+       "expiry": EX.FUT_EXPIRY}
+
+
+class Futures(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.pf = os.path.join(self.d, "portfolio.json")
+        self.orders = os.path.join(self.d, "orders.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def test_the_two_kite_calls_on_nfo(self):
+        calls = ticket.kite_calls(FUT)
+        base = {"variety": "regular", "exchange": "NFO", "tradingsymbol": EX.FUT_CONTRACT, "product": "MIS",
+                "validity": "DAY", "quantity": 65, "market_protection": -1}
+        self.assertEqual(calls[0]["input"], dict(base, transaction_type="BUY", order_type="MARKET"))
+        self.assertEqual(calls[1]["input"], dict(base, transaction_type="SELL", order_type="SL-M",
+                                                 trigger_price=23040.3))
+
+    def test_paper_round_trip_pays_futures_charges(self):
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "buy", 65, EX.FUT_PRICE, EX.FUT_DATE)
+        self.assertEqual(pf["cash"], round(200000 - india.leg_costs("fut", "buy", 65, EX.FUT_PRICE)["total"], 2))
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "sell", 65, EX.FUT_TARGET, EX.FUT_DATE)
+        legs = (india.leg_costs("fut", "buy", 65, EX.FUT_PRICE)["total"]
+                + india.leg_costs("fut", "sell", 65, EX.FUT_TARGET)["total"])
+        self.assertEqual(pf["cash"], round(200000 + 65 * (EX.FUT_TARGET - EX.FUT_PRICE) - legs, 2))
+        self.assertEqual(pf["positions"], [])
+
+    def test_flatten_a_futures_position(self):
+        ticket.apply_fill(self.pf, {"budget": 200000}, EX.FUT_CONTRACT, "buy", 65, EX.FUT_PRICE, EX.FUT_DATE)
+        plan = os.path.join(self.d, "plan.json")
+        with open(plan, "w") as fh:
+            json.dump({"symbol": "NIFTY", "contract": EX.FUT_CONTRACT, "lot": 65, "instrument": "fut",
+                       "flat_by": "15:15"}, fh)
+        code, text, err = run(["flatten", "--symbol", EX.FUT_CONTRACT, "--orders", self.orders, "--portfolio",
+                               self.pf, "--plan", plan, "--now", "2026-10-21 15:15"])
+        self.assertEqual(code, 0, err)
+        with open(self.orders) as fh:
+            o = json.load(fh)["orders"][0]
+        self.assertEqual((o["exchange"], o["qty"], o["instrument"], o["lot"]), ("NFO", "65", "fut", 65))
+        r = check.check([o], {"budget": 200000, "allow_fno": True}, now=check.parse_now("2026-10-21 15:15"),
+                        portfolio={"cash": 50000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65}]})
+        self.assertEqual(r["results"][0]["verdict"], "PASS", r["results"][0])
 
 
 class Flow(unittest.TestCase):
