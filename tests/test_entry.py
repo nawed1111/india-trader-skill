@@ -728,3 +728,16 @@ class Options(unittest.TestCase):
         code, _, err = run(["check", "RELIANCE", "--instrument", "opt", "--right", "CE", "--offline", REL,
                             "--now", "2026-10-19 09:50", "--bhavcopy", BHAV19])
         self.assertIn("NIFTY or BANKNIFTY", err)
+
+
+class ReviewFixesP3(unittest.TestCase):
+    setUp = Options.setUp
+    tearDown = Options.tearDown
+    entry = Options.entry
+
+    def test_a_given_premium_solves_its_iv_at_the_index_it_was_read_at(self):
+        code, text, err = Options.opt(self, "--right", "CE", "--premium", "198.87", "--premium-index", "23180",
+                                      now="2026-10-21 10:00")
+        self.assertEqual(code, 0, text + err)
+        self.assertAlmostEqual(self.entry()["option"]["iv"], EX.OPT_IV, delta=0.002)
+

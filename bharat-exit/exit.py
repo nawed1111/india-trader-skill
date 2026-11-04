@@ -552,7 +552,10 @@ def gather(a):
             info["entry_time"] = a.time or doc.get("time")
             info["entry_bar"] = a.entry_bar if a.entry_bar is not None else doc.get("bar_index")
             if a.entry is not None:
-                info["option"] = dict(info["option"], premium=a.entry, premium_source="user", iv=None)
+                info["option"] = dict(info["option"], premium=a.entry, premium_source="user", iv=None,
+                                      premium_index=a.premium_index)
+        if a.premium_index is not None and (info["instrument"] != "opt" or a.entry is None):
+            raise PlanError("--premium-index is the index when you read the option's --entry premium (options only)")
         if not info["symbol"] or info["entry"] is None:
             raise PlanError("%s has no symbol or price" % path)
     if info["interval"] not in INTERVALS:
@@ -598,7 +601,10 @@ def option_levels(c, opt, at_ist, flat_ist):
     premium = float(opt["premium"])
     iv = opt.get("iv")
     try:
-        if iv is None:
+        if iv is None and opt.get("premium_index") is not None:   # read later: solve where and when it was read
+            iv = india.option_iv(right, premium, float(opt["premium_index"]), ratio, k,
+                                 india.years_to_expiry(opt["premium_at"], expiry), rate)
+        elif iv is None:
             iv = india.option_iv(right, premium, float(c["entry"]), ratio, k, years, rate)
     except ValueError as e:
         raise PlanError("%s at Rs %.2f: %s" % (opt["contract"], premium, e))
@@ -693,7 +699,8 @@ def build_plan(a, now_utc):
             raise PlanError("an options plan needs the entry time (the option's time to expiry starts there)")
         at_ist = datetime.datetime.combine(day, entry_time, india.IST)
         flat_ist = datetime.datetime.combine(day, parse_hhmm(flat_by, "flat_by"), india.IST)
-        lv, opt_notes = option_levels(c, info["option"], at_ist, flat_ist)
+        o = dict(info["option"], premium_at=to_local(now_utc).replace(tzinfo=india.IST))
+        lv, opt_notes = option_levels(c, o, at_ist, flat_ist)
         plan.update(lv, index_side=info.get("index_side") or "up", target_label=plan["target_label"] + " on the index")
     if atr is not None:
         plan["atr"] = round(atr, 4)
@@ -816,6 +823,8 @@ def main(argv=None):
     p.add_argument("--from", dest="from_path", metavar="PATH", help="entry.json to plan from (default trader/entry.json)")
     p.add_argument("--symbol")
     p.add_argument("--entry", type=float, help="entry price (or a plan-ahead price with --from)")
+    p.add_argument("--premium-index", type=float, help="options: the index when you read the --entry premium "
+                                                       "(the implied volatility is solved there, at --now)")
     p.add_argument("--or-high", type=float)
     p.add_argument("--or-low", type=float)
     p.add_argument("--or-minutes", type=int, default=15)

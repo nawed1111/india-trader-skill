@@ -162,7 +162,8 @@ def future_lines(f):
 
 # ---------------------------------------------------------------- index options
 
-def option_leg(rows, symbol, day, index_price, at_ist, right, steps_otm=0, expiry=None, premium=None, cfg=None):
+def option_leg(rows, symbol, day, index_price, at_ist, right, steps_otm=0, expiry=None, premium=None, cfg=None,
+               premium_index=None, premium_at=None):
     """The option for a signal on the index: contract, IV and premium (Black-76 on the parity forward).
     The IV comes from a premium you give (Kite), else from the bhavcopy close: then the premium is estimated."""
     c = dict(OPT_DEFAULTS)
@@ -188,7 +189,11 @@ def option_leg(rows, symbol, day, index_price, at_ist, right, steps_otm=0, expir
     try:
         if premium is not None:
             source = "user"
-            iv = india.option_iv(right, float(premium), index_price, ratio, strike, years, rate)
+            if premium_index is not None:   # read later: solve at the index and the time it was read
+                iv = india.option_iv(right, float(premium), premium_index, ratio, strike,
+                                     india.years_to_expiry(premium_at, expiry), rate)
+            else:
+                iv = india.option_iv(right, float(premium), index_price, ratio, strike, years, rate)
             price = round(float(premium), 2)
         else:
             source = "estimated"
@@ -228,8 +233,9 @@ def attach_option(res, a, cfg, rows=None):
     at = datetime.datetime.combine(day, parse_hhmm(t["close_time"], "trigger") if t else
                                    datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S").time(), india.IST)
     exp = datetime.date.fromisoformat(a.expiry) if a.expiry else None
+    now = datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=india.IST)
     res["option"] = option_leg(rows if rows is not None else load_bhavcopy(a.bhavcopy, day), res["symbol"], day,
-                               price, at, a.right, a.steps_otm, exp, a.premium, cfg)
+                               price, at, a.right, a.steps_otm, exp, a.premium, cfg, a.premium_index, now)
 
 
 def option_lines(o):
@@ -920,6 +926,8 @@ def _check_instrument(a, sym):
             raise EntryError("--instrument opt needs --right CE or PE (a call or a put; this pack only buys them)")
         if a.premium is not None and a.premium <= 0:
             raise EntryError("--premium must be a price above 0")
+        if a.premium_index is not None and a.premium is None:
+            raise EntryError("--premium-index is the index when you read --premium: give both")
         if a.steps_otm < 0:
             raise EntryError("--steps-otm counts strikes out of the money: 0 or more")
         if a.expiry:
@@ -927,7 +935,7 @@ def _check_instrument(a, sym):
                 datetime.date.fromisoformat(a.expiry)
             except ValueError:
                 raise EntryError("--expiry wants a date like 2026-10-27")
-    elif a.right or a.premium is not None or a.expiry or a.steps_otm:
+    elif a.right or a.premium is not None or a.expiry or a.steps_otm or a.premium_index is not None:
         raise EntryError("--right, --premium, --expiry and --steps-otm are for options: add --instrument opt")
     if a.fut_price is not None and a.instrument != "fut":
         raise EntryError("--fut-price is the futures price: add --instrument fut")
@@ -1107,6 +1115,7 @@ def main(argv=None):
         p.add_argument("--steps-otm", type=int, default=0, help="strikes out of the money from ATM (default 0)")
         p.add_argument("--expiry", help="option expiry YYYY-MM-DD (default: the nearest that is not today)")
         p.add_argument("--premium", type=float, help="the option premium you see on Kite (sets the implied volatility)")
+        p.add_argument("--premium-index", type=float, help="the index when you read --premium (default: the trigger's)")
 
     p = sub.add_parser("check", help="the setup's status right now")
     p.add_argument("symbol")

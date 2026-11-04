@@ -434,3 +434,21 @@ class Options(unittest.TestCase):
         with self.assertRaises(exitp.PlanError) as cm:
             exitp.option_levels(c, o, at, _dt.datetime(2026, 10, 21, 15, 15, tzinfo=exitp.india.IST))
         self.assertIn("cannot reach", str(cm.exception))
+
+
+class ReviewFixesP3(unittest.TestCase):
+    setUp = Cli.setUp
+    tearDown = Cli.tearDown
+    read_plan = Cli.read_plan
+
+    def test_a_premium_read_later_solves_its_iv_at_the_index_then(self):
+        # 10:00, the index at 23180 and the call at 198.87 (the 12.5 % model's price there): the IV must stay
+        # about 12.5 %, so the premium stop still sits at the index stop
+        Options.entry_opt(self)
+        code, text, err = run(exitp, ["plan", "--now", "2026-10-21 10:00", "--stop", "or-mid", "--target", "1R",
+                                      "--entry", "198.87", "--premium-index", "23180", "--write"])
+        self.assertEqual(code, 0, text + err)
+        p = self.read_plan()
+        self.assertAlmostEqual(p["iv"], EX.OPT_IV, delta=0.002)
+        self.assertEqual(p["index_stop"], EX.FUT_INDEX_STOP)
+        self.assertLess(abs(p["stop"] - EX.OPT_STOP), 2.0)

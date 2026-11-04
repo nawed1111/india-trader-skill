@@ -188,7 +188,10 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 - **short** any sell that opens or adds to a short option blocks, whatever
   the config says: option selling is not part of this pack. Selling an
   option you hold is an exit.
-- **entry** anything but a limit order blocks.
+- **entry** anything but a limit order blocks, and so does a stop leg
+  without `stop_loss_limit_price` (NSE takes no SL-M on options). An NFO
+  name the pack cannot read as a future or an option, with no
+  `instrument`, blocks too.
 - **premium** a premium estimated from the bhavcopy blocks: give the live
   premium (`premium_source: user`, from bharat-exit --entry).
 - **liquidity** open interest under `min_option_oi`, or no trades in the

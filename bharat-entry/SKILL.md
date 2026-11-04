@@ -166,7 +166,9 @@ buys options; it never writes them. The result adds `option`:
   from it (`premium_source: user`). Without it the premium is estimated:
   Black-76 on the forward (the index x the put-call parity ratio from the
   last bhavcopy, same expiry), with the implied volatility of the last
-  bhavcopy close, held constant (`premium_source: estimated`).
+  bhavcopy close, held constant (`premium_source: estimated`). A premium
+  read after the trigger needs `--premium-index I` (the index then) so its
+  implied volatility is solved where and when it was read.
 - A strike under `min_option_oi` (config, default 50,000 units) or with no
   trades in the bhavcopy warns (`illiquid`); bharat-risk blocks it.
 - A premium under its intrinsic value has no implied volatility: refused

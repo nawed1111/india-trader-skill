@@ -351,6 +351,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         opt = o.get("instrument") == "opt" or bool(OPT_SYM.match(sym))
         fno = fno or opt
         fut = fno and not opt
+        unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or OPT_SYM.match(sym))
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
@@ -405,6 +406,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                          % (oc or "advanced_instructions"))
 
         # asset
+        if unknown_nfo:   # fail closed: an F&O order this pack cannot classify skips no checks by default
+            reasons.append("asset: %s on NFO is not a contract name this pack knows (like NIFTY26OCTFUT or "
+                           "NIFTY26OCT23100CE), and the order has no instrument" % sym)
         if sym and (fno or FNO.match(sym.replace(" ", ""))):
             if not c.get("allow_fno"):
                 reasons.append("asset: %s is an F&O contract; P1 trades cash stocks only "
@@ -494,6 +498,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if typ != "limit":
                 later.append("entry: an option entry is a limit order at the premium; a market order on an option "
                              "can fill far from its fair value")
+            if o.get("stop_loss_stop_price") is not None and o.get("stop_loss_limit_price") is None:
+                later.append("stop: an option's stop goes as SL (NSE takes no SL-M on options), so the order needs "
+                             "stop_loss_limit_price (bharat-budget writes it); without it the stop would be rejected "
+                             "after the entry fills")
             if o.get("premium_source") != "user":
                 later.append("premium: the premium is estimated from the last bhavcopy, and options move too fast for "
                              "an end-of-day price. Read the live premium on Kite and re-plan (bharat-exit --entry)")

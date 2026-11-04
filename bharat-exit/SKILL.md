@@ -150,7 +150,8 @@ premium), the target ticks up. A target that the model says cannot pay even
 if the index reaches it at the flat-by (the time decay eats the move) is
 refused. The plan keeps both: `entry`/`stop`/`target` as premiums and
 `index_entry`/`index_stop`/`index_target`. `--entry P` on an options plan is
-the premium you paid; it sets the implied volatility.
+the premium you paid; it sets the implied volatility. Read later than the
+trigger? Add `--premium-index I`, the index when you read it.
 
 ## What it never does
 

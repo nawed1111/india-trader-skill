@@ -500,3 +500,19 @@ class Options(unittest.TestCase):
         for k, v in (("right", "PE"), ("strike", 23200.0), ("premium_source", "estimated"), ("oi", 1)):
             self.assertNotEqual(check.fingerprint(o), check.fingerprint(dict(o, **{k: v})), k)
             self.assertEqual(check.fingerprint(dict(o, **{k: v})), ticket.fingerprint(dict(o, **{k: v})), k)
+
+
+class ReviewFixesP3(unittest.TestCase):
+    def test_an_option_stop_without_its_limit_blocks(self):
+        o = opt_order()
+        del o["stop_loss_limit_price"]          # the ticket would send SL-M, which NSE rejects on options
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("stop_loss_limit_price", " ".join(r["reasons"]))
+
+    def test_an_unknown_nfo_name_fails_closed(self):
+        o = opt_order(symbol="NIFTY 26OCT 23100 CE")
+        del o["instrument"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("NFO", " ".join(r["reasons"]))
