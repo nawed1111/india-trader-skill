@@ -52,7 +52,7 @@ FUT_LOTS = 1
 FUT_COSTS_AT_STOP = 894.53
 FUT_MAX_LOSS = 6201.78         # 65 x 81.65 + 894.53
 
-# P3: index options, the same 21 Oct 2026 session (docs/p0-findings.md, P3 findings)
+# P3: index options, the same 21 Oct 2026 session (tests/fixtures/p3/)
 OPT_SYMBOL = "NIFTY"
 OPT_DATE = "2026-10-21"
 OPT_CONTRACT = "NIFTY26OCT23100CE"   # ATM of 23115.65, the 27 Oct monthly

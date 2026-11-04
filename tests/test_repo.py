@@ -23,15 +23,16 @@ def frontmatter(path):
     return (m.group(1) if m else ""), text
 
 
-def ignored_dirs():
-    """The .gitignore folders (lines ending in /), plus .git: local only, never part of the pack."""
+def ignored_names():
+    """What .gitignore keeps local, as root-level names (docs/ -> docs, .claude/settings.local.json -> .claude,
+    .DS_Store), plus .git. Glob lines like *.pyc are not names."""
     with open(os.path.join(ROOT, ".gitignore")) as fh:
-        lines = [x.strip() for x in fh]
-    return {x.rstrip("/") for x in lines if x.endswith("/") and not x.startswith("#")} | {".git"}
+        lines = [x.strip() for x in fh if x.strip() and not x.startswith("#")]
+    return {x.strip("/").split("/")[0] for x in lines if not any(c in x for c in "*?[")} | {".git"}
 
 
 def every_text_file():
-    skip = ignored_dirs()
+    skip = ignored_names()
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in skip]
         for f in files:
@@ -46,13 +47,14 @@ class Repo(unittest.TestCase):
         self.assertEqual(found, sorted(SKILLS))
 
     def test_root_matches_the_reel(self):
-        root = set(d for d in os.listdir(ROOT) if d not in ignored_dirs() | {".gitignore"})
+        root = set(d for d in os.listdir(ROOT) if d not in ignored_names() | {".gitignore"})
         required = set([".claude-plugin", "LICENSE", "README.md", "tests"] + SKILLS)
         self.assertLessEqual(required, root)
         self.assertLessEqual(root - required, {"tools", "india"})
 
     def test_local_only_files_stay_out_of_git(self):
-        self.assertLessEqual({"docs", "trader", ".superpowers"}, ignored_dirs())
+        self.assertLessEqual({"docs", "trader", ".superpowers", ".DS_Store", ".claude"}, ignored_names())
+        self.assertNotIn("tools", ignored_names())
         with open(os.path.join(ROOT, ".gitignore")) as fh:
             text = fh.read()
         for line in ("*.pyc", ".claude/settings.local.json"):
