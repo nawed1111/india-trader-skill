@@ -20,7 +20,7 @@ CONFIG_KEYS = {
     "min_reward_risk": 1.0, "max_cost_share": 0.25, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "broker": "zerodha", "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False,
-    "allow_short": False,
+    "allow_short": False, "margin_per_lot_inr": {}, "max_lots": 1,
 }
 
 
@@ -102,6 +102,71 @@ class TheExample(unittest.TestCase):
         self.assertEqual((doc["created_by"], doc["status"], doc["paper"], len(doc["orders"])),
                          ("bharat-budget", "proposed", True, 1))
         self.assertEqual(doc["created_at"], "2026-10-19T04:21:00Z")
+
+
+FUT_PLAN = {"created_by": "bharat-exit", "symbol": "NIFTY", "side": "buy", "date": EX.FUT_DATE, "setup": "orb",
+            "entry_time": EX.FUT_TRIGGER_AT, "instrument": "fut", "contract": EX.FUT_CONTRACT, "lot": EX.FUT_LOT,
+            "expiry": EX.FUT_EXPIRY, "basis_ratio": EX.FUT_BASIS, "basis_date": EX.FUT_BASIS_DATE,
+            "basis_estimated": False, "entry": EX.FUT_PRICE, "stop": EX.FUT_STOP, "target": EX.FUT_TARGET,
+            "risk_per_share": EX.FUT_RISK_PER_UNIT, "risk_per_unit": EX.FUT_RISK_PER_UNIT, "flat_by": "15:15"}
+
+
+def fut_cfg(**over):
+    c = cfg(max_loss_per_trade_inr=EX.FUT_MAX_LOSS_LIMIT, margin_per_lot_inr={"NIFTY": EX.FUT_MARGIN_PER_LOT},
+            allow_fno=True)
+    c.update(over)
+    return c
+
+
+class Futures(unittest.TestCase):
+    def test_the_example_sizes_to_the_lot(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(), today=EX.FUT_DATE)
+        self.assertIsNone(s["refusal"])
+        self.assertEqual((s["lots"], s["qty"]), (EX.FUT_LOTS, EX.FUT_LOTS * EX.FUT_LOT))
+        self.assertEqual((s["costs_at_stop"], s["max_loss"]), (EX.FUT_COSTS_AT_STOP, EX.FUT_MAX_LOSS))
+        names = {l["name"]: l["lots"] for l in s["limits"]}
+        self.assertEqual(names["max loss"], 1)      # 2 lots: 2 x 5,307.25 + costs > 7,000
+        self.assertEqual(names["margin"], 1)        # (2,00,000 - 20,000) / 1,75,953
+        self.assertEqual(names["max lots"], 1)
+        o = size.bracket_order(s)
+        self.assertEqual((o["exchange"], o["product"], o["symbol"], o["qty"], o["instrument"], o["lots"], o["lot"]),
+                         ("NFO", "MIS", EX.FUT_CONTRACT, "65", "fut", 1, 65))
+        self.assertEqual((o["stop_loss_stop_price"], o["take_profit_limit_price"]), ("23040.30", "23203.60"))
+        self.assertEqual(o["underlying"], "NIFTY")
+        text = size.plan_report(s, o)
+        self.assertIn("1 lot of NIFTY26OCTFUT", text)
+        self.assertIn("margin", text)
+
+    def test_fno_off_refuses(self):
+        with self.assertRaises(size.SizeError) as cm:
+            size.size_trade(dict(FUT_PLAN), fut_cfg(allow_fno=False), today=EX.FUT_DATE)
+        self.assertIn("allow_fno", str(cm.exception))
+
+    def test_no_margin_figure_refuses_and_names_the_key(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(margin_per_lot_inr={}), today=EX.FUT_DATE)
+        self.assertEqual(s["qty"], 0)
+        self.assertIn("margin_per_lot_inr", s["refusal"])
+        self.assertIsNone(size.bracket_order(s))
+
+    def test_a_margin_above_the_cash_is_zero_lots(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(margin_per_lot_inr={"NIFTY": 250000}), today=EX.FUT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "margin"))
+        self.assertIn("margin", s["refusal"])
+
+    def test_max_loss_is_whole_lots(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(max_loss_per_trade_inr=6000), today=EX.FUT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "max loss"))
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(max_loss_per_trade_inr=20000, max_lots=3, budget=1000000,
+                                                    margin_per_lot_inr={"NIFTY": 175953}), today=EX.FUT_DATE)
+        self.assertEqual((s["lots"], s["qty"]), (3, 195))
+
+    def test_costs_use_futures_rounding(self):
+        with open(os.path.join(FIX, "p2", "zerodha-calc-fut.json")) as fh:
+            row = json.load(fh)["rows"][0]           # 65 NIFTY 23,500 -> 23,600
+        p = dict(FUT_PLAN, entry=23500.0, stop=23400.0, target=23600.0)
+        s = size.size_trade(p, fut_cfg(max_loss_per_trade_inr=20000), today=EX.FUT_DATE)
+        self.assertEqual(s["lots"], 1)
+        self.assertEqual(s["costs_at_target"], row["total"])
 
 
 class Rules(unittest.TestCase):

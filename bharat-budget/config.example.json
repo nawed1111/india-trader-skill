@@ -20,5 +20,7 @@
   "blocked": [],
   "allow_fno": false,
   "allow_margin": false,
-  "allow_short": false
+  "allow_short": false,
+  "margin_per_lot_inr": {},
+  "max_lots": 1
 }
