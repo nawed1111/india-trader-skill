@@ -467,6 +467,19 @@ class Options(unittest.TestCase):
     def test_the_max_loss_uses_option_costs(self):
         self.assertEqual(ticket.max_loss(_opt_order())[0], EX.OPT_MAX_LOSS)
 
+    def test_flatten_rounds_the_limit_down_to_the_tick(self):
+        ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
+        args = ["flatten", "--symbol", EX.OPT_CONTRACT, "--orders", self.orders, "--portfolio", self.pf,
+                "--plan", os.path.join(self.d, "none.json"), "--now", "2026-10-21 15:15"]
+        for given, sent, note in (("150.03", "150.00", True), ("150.00", "150.00", False)):
+            code, out, err = run(args + ["--limit", given])
+            self.assertEqual(code, 0, err)
+            with open(self.orders) as fh:
+                self.assertEqual(json.load(fh)["orders"][0]["limit_price"], sent)
+            self.assertEqual("off NSE's 0.05 tick" in out, note, out)
+            if note:
+                self.assertIn("150.03", out)
+
     def test_flatten_an_option_needs_a_limit(self):
         ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
         args = ["flatten", "--symbol", EX.OPT_CONTRACT, "--orders", self.orders, "--portfolio", self.pf,
