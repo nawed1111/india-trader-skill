@@ -72,40 +72,49 @@ Use your own folder (`ls /Volumes` shows an SSD's name). `tools/setup-trader.sh`
 makes the folder, clones and builds Zerodha's own
 [kite-mcp-server](https://github.com/zerodha/kite-mcp-server), installs the
 eleven skills for that folder, writes a paper-trading `trader/config.json`,
-and adds a `kite` server to Claude Desktop's config with placeholder keys and
-the order tools switched off. Run it again any time: it keeps your keys and
-your other servers, and backs up Claude's config first. Then:
+and runs one shared Kite server in the background (HTTP mode on
+`127.0.0.1:8080`, started at login) with placeholder keys and the order tools
+switched off. It connects Claude Code to that server and sets the order tools
+to ask before every call. Run it again any time: it keeps your keys, and
+moves the ones you typed for the old setup (in Claude Desktop's config) over.
+Then:
 
-1. **Keys.** Make a Kite Connect app at developers.kite.trade. Type its key
-   and secret over `PASTE_KEY_LATER` and `PASTE_SECRET_LATER` in Claude's own
-   config file (macOS `~/Library/Application Support/Claude/claude_desktop_config.json`,
-   Windows `%APPDATA%\Claude\claude_desktop_config.json`), never in this
-   repo and never in a chat. Quit Claude Desktop and reopen it.
-2. **Claude Code too.** The skills run in Claude Code (`cd` into your folder,
-   then `claude`), which keeps its own list of MCP servers and does not read
-   Claude Desktop's. Once the keys are in, copy the server across, picking
-   `kite` from the list (and again whenever you change the keys):
-
-   ```bash
-   claude mcp add-from-claude-desktop
-   ```
-
-   The keys land in Claude Code's own settings in your home folder, not in
-   the repo. If it says kite already exists, run `claude mcp remove kite`
-   first, then copy it again.
+1. **Keys.** Make a Kite Connect app at developers.kite.trade and set its
+   Redirect URL to `http://127.0.0.1:8080/callback`: Zerodha sends you back
+   there after you sign in. Type its key and secret over `PASTE_KEY_LATER`
+   and `PASTE_SECRET_LATER` in `~/.config/kite-mcp-server/env` (only you can
+   read it), never in this repo and never in a chat. Then restart the
+   server: macOS `launchctl kickstart -k gui/$(id -u)/local.kite-mcp-server`,
+   Linux `systemctl --user restart kite-mcp-server`.
+2. **Log in.** Quit Claude completely and reopen it, `cd` into your folder,
+   run `claude` and ask for your Kite profile. Claude gives you a login
+   link, and you sign in on Zerodha's page yourself. Zerodha ends API logins
+   every morning and each Claude session logs in on its own, so expect one
+   link a day per session.
 3. **Read-only first.** Ask Claude for your Kite profile, margins and
-   positions. With `EXCLUDED_TOOLS` in the config, Claude cannot place,
+   positions. With `EXCLUDED_TOOLS` in the key file, Claude cannot place,
    change or cancel an order.
 4. **Live, when you decide.** Register your static IP in Kite (Profile, IP
    whitelist), set `"static_ip_registered": true` and `"paper": false` in
-   `trader/config.json`, delete the `EXCLUDED_TOOLS` line from Claude
-   Desktop's config, restart Claude Desktop, copy kite across to Claude Code
-   again (step 2), and set `place_order`, `modify_order` and `cancel_order`
-   to **Needs approval**. Start with the smallest trade you can.
+   `trader/config.json`, delete the `EXCLUDED_TOOLS` line from the key file,
+   restart the server (step 1) and log in again. The order tools already ask
+   before every call (the ask rules the script put in your folder's
+   `.claude/settings.json`): never allow them always. Start with the
+   smallest trade you can.
 
-On Windows, or to do it by hand: build the server per its README and copy
-the `kite` block from `bharat-broker/claude_desktop_config.example.json` into
-Claude's config. `/bharat-broker` walks through the details.
+Why one shared server: the server's stdio mode cannot log in (it rejects
+the fixed `stdio` session ID), and with one stdio copy per Claude session
+they fight over port 8080, so a login can land in a copy that never asked
+for it. The server logs to `~/Library/Logs/kite-mcp-server.log` on macOS and
+to `journalctl --user -u kite-mcp-server` on Linux. Kite no longer shows in
+Claude Desktop's chat: the skills run in Claude Code.
+
+On Windows, or to do it by hand: build the server per its README, run it
+with the settings in `bharat-broker/kite-mcp-server.env.example` plus
+`APP_MODE=http`, `APP_HOST=127.0.0.1` and `APP_PORT=8080`, and connect Claude
+Code to it with
+`claude mcp add -s local --transport http kite http://127.0.0.1:8080/mcp`.
+`/bharat-broker` walks through the details.
 
 ## The eleven
 
@@ -347,10 +356,10 @@ yourself, and talk to a SEBI-registered adviser if you need advice.
 
 **No trade goes through until you say yes.** Only `/bharat-broker` can lead
 to an order, and only after `/bharat-risk` passes that exact order and you
-type yes for it in the chat. Set the Kite tools that place or cancel orders
-to "Needs approval" in Claude (Customize, Connectors, tool permissions),
-never "Always allow", so Claude's own "Allow once / Deny" card is a second
-check. No F&O, margin (MTF), short selling or MIS leverage unless you turn
+type yes for it in the chat. The setup script sets the Kite tools that
+place, change or cancel orders to "Needs approval" (ask rules in your
+folder's `.claude/settings.json`); never "Always allow" them, so Claude's own
+"Allow once / Deny" card is a second check. No F&O, margin (MTF), short selling or MIS leverage unless you turn
 them on.
 
 **Paper first.** `"paper": true` is the default. India's brokers have no
@@ -362,8 +371,8 @@ since 1 April 2026), every order sent through a broker's API must come from
 a static IP you have registered with the broker. Zerodha's hosted MCP server
 has no order tools, so live trading needs your own copy of
 zerodha/kite-mcp-server, run from that IP, with your own Kite Connect key in
-Claude's own config file, never in the chat and never in the example file in
-this repo (`bharat-broker/claude_desktop_config.example.json` is tracked by
+`~/.config/kite-mcp-server/env`, never in the chat and never in the example
+file in this repo (`bharat-broker/kite-mcp-server.env.example` is tracked by
 git, so a key typed there would be pushed with your next commit). Zerodha has no bracket orders: the pack
 sends the entry, then one SL-M stop, and keeps the target as an alert, so two
 exit orders can never both fill.

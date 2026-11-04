@@ -92,29 +92,33 @@ class TicketShape(unittest.TestCase):
         self.assertEqual(ticket.max_loss(no_plan), (None, 1215.35))
 
 
-class DesktopConfig(unittest.TestCase):
-    def test_example_is_a_self_hosted_kite_server_with_placeholder_keys(self):
-        with open(os.path.join(ROOT, "bharat-broker", "claude_desktop_config.example.json")) as fh:
-            doc = json.load(fh)
-        server = doc["mcpServers"]["kite"]
-        for k in ("KITE_API_KEY", "KITE_API_SECRET"):
-            self.assertIn("NEVER_IN_CHAT", server["env"][k])
-        for words in ("self-hosted", "static IP", "Needs approval"):
-            self.assertIn(words, doc["_note"])
+class KiteKeyFile(unittest.TestCase):
+    def example(self):
+        with open(os.path.join(ROOT, "bharat-broker", "kite-mcp-server.env.example")) as fh:
+            lines = fh.read().splitlines()
+        note = " ".join(x.lstrip("# ") for x in lines if x.startswith("#"))
+        return note, dict(x.split("=", 1) for x in lines if x and not x.startswith("#"))
 
-    def test_keys_go_in_claudes_own_config_never_in_the_example(self):
-        # the example is tracked by git: a key typed into it ships with the next commit
-        with open(os.path.join(ROOT, "bharat-broker", "claude_desktop_config.example.json")) as fh:
-            doc = json.load(fh)
+    def test_example_is_one_shared_self_hosted_kite_server_with_placeholder_keys(self):
+        note, env = self.example()
         for k in ("KITE_API_KEY", "KITE_API_SECRET"):
-            self.assertIn("NOT_HERE", doc["mcpServers"]["kite"]["env"][k],
+            self.assertIn("NEVER_IN_CHAT", env[k])
+        self.assertEqual(env["EXCLUDED_TOOLS"], "place_order,modify_order,cancel_order")
+        for words in ("self-hosted", "static IP", "Needs approval", "APP_MODE=http",
+                      "http://127.0.0.1:8080/callback", "never stdio"):
+            self.assertIn(words, note)
+
+    def test_keys_go_in_the_key_file_never_in_the_example(self):
+        # the example is tracked by git: a key typed into it ships with the next commit
+        note, env = self.example()
+        for k in ("KITE_API_KEY", "KITE_API_SECRET"):
+            self.assertIn("NOT_HERE", env[k],
                           "a real key in the tracked example? put the placeholder back and regenerate the key")
-        for words in ("Do not fill in this file", "Library/Application Support/Claude/claude_desktop_config.json",
-                      "%APPDATA%\\Claude\\claude_desktop_config.json"):
-            self.assertIn(words, doc["_note"])
+        for words in ("Do not fill in this file", "~/.config/kite-mcp-server/env"):
+            self.assertIn(words, note)
         with open(os.path.join(ROOT, ".gitignore")) as fh:
             ignored = fh.read().splitlines()
-        for name in ("claude_desktop_config.json", ".env", ".mcp.json"):
+        for name in ("claude_desktop_config.json", ".env", ".mcp.json", "kite-mcp-server.env"):
             self.assertIn(name, ignored)
 
 

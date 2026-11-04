@@ -1,6 +1,8 @@
-"""tools/setup-trader.sh, run for real against stand-in git and go (no network, no build)."""
+"""tools/setup-trader.sh, run for real against stand-in git, go, launchctl, systemctl, claude and uname
+(no network, no build, nothing installed: the real service manager and Claude Code are never called)."""
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
@@ -10,6 +12,7 @@ import unittest
 from _load import ROOT
 
 SCRIPT = os.path.join(ROOT, "tools", "setup-trader.sh")
+URL = "http://127.0.0.1:8080/mcp"
 
 FAKE_GIT = """#!/bin/sh
 # clone URL: make the folder a real clone would; anything else (pull) does nothing
@@ -27,6 +30,10 @@ FAKE_GO = """#!/bin/sh
 # go build -o NAME: leave an empty NAME behind
 touch "$3"
 """
+# stand-ins that only write down how they were called
+LOGGER = """#!/bin/sh
+echo "$(basename "$0") $*" >> "$CALLS"
+"""
 
 
 @unittest.skipUnless(shutil.which("bash"), "needs bash")
@@ -35,62 +42,116 @@ class SetupScript(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.bin = os.path.join(self.d, "bin")
         os.mkdir(self.bin)
-        for name, body in (("git", FAKE_GIT), ("go", FAKE_GO)):
-            path = os.path.join(self.bin, name)
-            with open(path, "w") as fh:
-                fh.write(body)
-            os.chmod(path, 0o755)
+        for name, body in (("git", FAKE_GIT), ("go", FAKE_GO), ("launchctl", LOGGER),
+                           ("systemctl", LOGGER), ("claude", LOGGER)):
+            self.fake(name, body)
+        self.home = os.path.join(self.d, "home")
         self.ssd = os.path.join(self.d, "MySSD")
         os.mkdir(self.ssd)
         self.target = os.path.join(self.ssd, "trader")
-        self.cfg = os.path.join(self.d, "home", "Claude", "claude_desktop_config.json")
+        self.exe = os.path.join(self.target, "kite-mcp-server", "kite-mcp-server")
+        self.cfg = os.path.join(self.home, "Claude", "claude_desktop_config.json")
+        self.keys = os.path.join(self.home, ".config", "kite-mcp-server", "env")
+        self.calls = os.path.join(self.d, "calls")
 
     def tearDown(self):
         shutil.rmtree(self.d)
 
-    def run_script(self, *args):
-        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""),
-                   HOME=os.path.join(self.d, "home"), CLAUDE_DESKTOP_CONFIG=self.cfg, INDIA_TRADER_SKIP_TESTS="1")
+    def fake(self, name, body):
+        path = os.path.join(self.bin, name)
+        with open(path, "w") as fh:
+            fh.write(body)
+        os.chmod(path, 0o755)
+
+    def run_script(self, *args, system="Darwin"):
+        self.fake("uname", "#!/bin/sh\necho %s\n" % system)
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), HOME=self.home,
+                   CLAUDE_DESKTOP_CONFIG=self.cfg, INDIA_TRADER_SKIP_TESTS="1", CALLS=self.calls)
         return subprocess.run(["bash", SCRIPT] + list(args), env=env, capture_output=True, text=True)
 
-    def kite(self):
-        with open(self.cfg) as fh:
-            return json.load(fh)
+    def called(self):
+        with open(self.calls) as fh:
+            return fh.read().splitlines()
 
-    def test_sets_up_the_folder_the_skills_and_the_kite_server(self):
+    def key_file(self):
+        with open(self.keys) as fh:
+            return fh.read().splitlines()
+
+    def ask_rules(self):
+        with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
+            return json.load(fh)["permissions"]["ask"]
+
+    def test_sets_up_the_folder_the_skills_and_one_shared_kite_server(self):
         r = self.run_script(self.target)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        exe = os.path.join(self.target, "kite-mcp-server", "kite-mcp-server")
-        self.assertTrue(os.stat(exe).st_mode & stat.S_IXUSR)
+        self.assertTrue(os.stat(self.exe).st_mode & stat.S_IXUSR)
         self.assertTrue(os.path.isdir(os.path.join(self.target, ".claude", "skills", "bharat-risk")))
         with open(os.path.join(self.target, "trader", "config.json")) as fh:
             self.assertIs(json.load(fh)["paper"], True)
-        kite = self.kite()["mcpServers"]["kite"]
-        self.assertEqual(kite["command"], exe)
-        self.assertEqual(kite["env"]["APP_MODE"], "stdio")
-        self.assertEqual(kite["env"]["KITE_API_KEY"], "PASTE_KEY_LATER")
-        self.assertEqual(kite["env"]["KITE_API_SECRET"], "PASTE_SECRET_LATER")
-        self.assertEqual(kite["env"]["EXCLUDED_TOOLS"], "place_order,modify_order,cancel_order")
-        # Claude Code keeps its own server list: the script says how to copy kite across, once the keys are in
-        self.assertIn("claude mcp add-from-claude-desktop", r.stdout)
+        # placeholder keys and the order tools off, in a file only you can read
+        self.assertEqual(stat.S_IMODE(os.stat(self.keys).st_mode), 0o600)
+        lines = self.key_file()
+        for line in ("KITE_API_KEY=PASTE_KEY_LATER", "KITE_API_SECRET=PASTE_SECRET_LATER",
+                     "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"):
+            self.assertIn(line, lines)
+        # one copy, HTTP mode on loopback, started at login and restarted if it stops
+        plist_path = os.path.join(self.home, "Library", "LaunchAgents", "local.kite-mcp-server.plist")
+        with open(plist_path, "rb") as fh:
+            plist = plistlib.load(fh)
+        self.assertEqual(plist["EnvironmentVariables"],
+                         {"APP_MODE": "http", "APP_HOST": "127.0.0.1", "APP_PORT": "8080"})
+        self.assertEqual(plist["ProgramArguments"][-2:], [self.keys, self.exe])
+        self.assertIs(plist["KeepAlive"], True)
+        calls = self.called()
+        self.assertIn("launchctl bootstrap gui/%d %s" % (os.getuid(), plist_path), calls)
+        # Claude Code connects to it; order tools always ask
+        self.assertIn("claude mcp add -s local --transport http kite " + URL, calls)
+        self.assertIn("mcp__kite__place_order", self.ask_rules())
+        self.assertIn("mcp__kite__cancel_order", self.ask_rules())
+        self.assertIn("127.0.0.1:8080/callback", r.stdout)
+        self.assertFalse(os.path.exists(self.cfg))  # no Claude Desktop config made
 
-    def test_a_second_run_keeps_your_keys_and_other_servers_and_backs_up(self):
+    def test_moves_old_desktop_keys_over_takes_kite_out_and_keeps_the_rest(self):
         os.makedirs(os.path.dirname(self.cfg))
+        old_kite = {"command": "/old/kite-mcp-server", "env": {
+            "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}  # went live
         with open(self.cfg, "w") as fh:
-            json.dump({"mcpServers": {"other": {"command": "x"}}, "theme": "dark"}, fh)
-        self.assertEqual(self.run_script(self.target).returncode, 0)
-        doc = self.kite()
-        doc["mcpServers"]["kite"]["env"]["KITE_API_KEY"] = "typed-by-you"
-        with open(self.cfg, "w") as fh:
-            json.dump(doc, fh)
+            json.dump({"mcpServers": {"kite": old_kite, "other": {"command": "x"}}, "theme": "dark"}, fh)
+        os.makedirs(os.path.join(self.target, ".claude"))
+        with open(os.path.join(self.target, ".claude", "settings.json"), "w") as fh:
+            json.dump({"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}, fh)
         r = self.run_script(self.target)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        doc = self.kite()
-        self.assertEqual(doc["mcpServers"]["kite"]["env"]["KITE_API_KEY"], "typed-by-you")
+        lines = self.key_file()
+        self.assertIn("KITE_API_KEY=typed-key", lines)
+        self.assertIn("KITE_API_SECRET=typed-secret", lines)
+        self.assertFalse([x for x in lines if x.startswith("EXCLUDED_TOOLS")])  # order tools stay on, as you had them
+        with open(self.cfg) as fh:
+            doc = json.load(fh)
+        self.assertNotIn("kite", doc["mcpServers"])
         self.assertEqual(doc["mcpServers"]["other"], {"command": "x"})
         self.assertEqual(doc["theme"], "dark")
-        backups = [f for f in os.listdir(os.path.dirname(self.cfg)) if ".backup-" in f]
-        self.assertTrue(backups)
+        self.assertTrue([f for f in os.listdir(os.path.dirname(self.cfg)) if ".backup-" in f])
+        with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
+            settings = json.load(fh)
+        self.assertEqual((settings["model"], settings["permissions"]["allow"]), ("opus", ["Bash(ls)"]))
+        # a second run keeps the key file you edited and adds no duplicate rules
+        with open(self.keys, "a") as fh:
+            fh.write("EXCLUDED_TOOLS=place_order\n")
+        self.assertEqual(self.run_script(self.target).returncode, 0)
+        self.assertIn("EXCLUDED_TOOLS=place_order", self.key_file())
+        self.assertEqual(self.ask_rules().count("mcp__kite__place_order"), 1)
+
+    def test_linux_runs_it_as_a_systemd_user_service(self):
+        r = self.run_script(self.target, system="Linux")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(os.path.join(self.home, ".config", "systemd", "user", "kite-mcp-server.service")) as fh:
+            unit = fh.read().splitlines()
+        for line in ("Environment=APP_MODE=http", "Environment=APP_HOST=127.0.0.1",
+                     "EnvironmentFile=" + self.keys, 'ExecStart="%s"' % self.exe, "Restart=always"):
+            self.assertIn(line, unit)
+        self.assertIn("systemctl --user restart kite-mcp-server", self.called())
+        self.assertIn("systemctl --user restart kite-mcp-server", r.stdout)
 
     def test_an_unplugged_drive_stops_before_making_anything(self):
         gone = os.path.join(self.d, "NotPlugged", "trader")
@@ -98,7 +159,8 @@ class SetupScript(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("ls /Volumes", r.stdout + r.stderr)
         self.assertFalse(os.path.exists(os.path.dirname(gone)))
-        self.assertFalse(os.path.exists(self.cfg))
+        self.assertFalse(os.path.exists(self.keys))
+        self.assertFalse(os.path.exists(self.calls))
 
     def test_no_folder_given_prints_usage(self):
         r = self.run_script()
@@ -109,8 +171,9 @@ class SetupScript(unittest.TestCase):
         for path in ("README.md", os.path.join("bharat-broker", "SKILL.md")):
             with open(os.path.join(ROOT, path), encoding="utf-8") as fh:
                 text = fh.read()
-            self.assertIn("tools/setup-trader.sh", text, path)
-            self.assertIn("claude mcp add-from-claude-desktop", text, path)
+            for words in ("tools/setup-trader.sh", "127.0.0.1:8080/callback", "~/.config/kite-mcp-server/env"):
+                self.assertTrue(words in text, "%s: %s" % (path, words))
+            self.assertFalse("add-from-claude-desktop" in text, path)  # the old stdio copy cannot log in
 
 
 if __name__ == "__main__":
