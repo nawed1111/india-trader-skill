@@ -11,3 +11,6 @@ TRIGGER_BAR = "09:45"
 TRIGGER_AT = "9:50 AM"
 TRIGGER_CLOSE = 1227.80
 PCT_OVER = 0.36
+STOP = 1215.35          # bharat-exit: the opening-range midpoint
+TARGET = 1240.25        # 1R
+RISK_PER_SHARE = 12.45

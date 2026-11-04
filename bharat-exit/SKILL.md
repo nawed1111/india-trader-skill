@@ -1,17 +1,18 @@
 ---
 name: bharat-exit
 description: >-
-  Exit Planner. Sets your stop and your target before you enter, so you know
-  when to get out. Reads the entry from bharat-entry (or a price you give),
-  puts the stop at the opening-range midpoint by default (or the range low,
-  your price, a percent, or a multiple of the ATR), rounds it down to the
-  cent, and sets the target at 2R (or 1R, or your price). Refuses a stop at or
-  above the entry, a target at or below it, or a stop too tight to survive the
-  spread, and says why. Writes trader/plan.json for the Time Machine, the
-  Budget Manager and Price Alerts. Long side only. Use when the user says
-  "where's my stop", "set my stop and target", "plan the exit", "when do I get
-  out", "stop loss", "what's my R", "risk reward", or right after
-  /bharat-entry triggers, before /bharat-timemachine.
+  Exit Planner for NSE intraday trades. Sets your stop and your target before
+  you enter, so you know when to get out. Reads the entry from bharat-entry
+  (or a price you give), puts the stop at the opening-range midpoint by
+  default (or the range low, your price, a percent, or a multiple of the ATR),
+  rounds it down to NSE's Rs 0.05 tick, and sets the target at 2R (or 1R, or
+  your price). Out by 15:15 IST, before the broker's 15:20 MIS square-off.
+  Refuses a stop at or above the entry, a target at or below it, or a stop
+  too tight to survive the spread, and says why. Writes trader/plan.json for
+  the time machine, the budget manager and price alerts. Long side only. Use
+  when the user says "where's my stop", "set my stop and target", "plan the
+  exit", "when do I get out", "stop loss", "what's my R", "risk reward", or
+  right after /bharat-entry triggers, before /bharat-timemachine.
 argument-hint: "[--stop or-mid|or-low|price:X|pct:X|atr:K] [--target 2R|1R|price:X]"
 ---
 
@@ -19,31 +20,32 @@ argument-hint: "[--stop or-mid|or-low|price:X|pct:X|atr:K] [--target 2R|1R|price
 
 The Exit Planner decides how a trade ends before it starts. The stop is where
 the setup has failed. The target is where you take what you came for. Both
-are set BEFORE the entry, written down and handed on, so nobody has to decide
-anything in the middle of a fast move. A stop is a plan, not a guarantee: a
-gap or a fast market can fill past it. Day trading loses most people money,
-and a neat plan does not change that.
+are set before the entry, written down and handed on, so nobody has to
+decide anything in the middle of a fast move. A stop is a plan, not a
+guarantee: a gap, a fast market or a price-band freeze can fill past it, or
+leave you unable to exit. SEBI's studies show most retail intraday traders
+lose money, and a neat plan does not change that.
 
 `${CLAUDE_SKILL_DIR}` below is this skill's folder (where this SKILL.md lives).
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/exit.py" plan                          # trader/entry.json: midpoint stop, 2R target
+python3 "${CLAUDE_SKILL_DIR}/exit.py" plan                       # trader/entry.json: midpoint stop, 2R target
 python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --stop or-mid --target 1R --write
-python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --stop atr:1.5           # needs the session's bars (Yahoo or --offline)
-python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --symbol TSLA --entry 364.18 --or-high 362.18 --or-low 354.47
-python3 "${CLAUDE_SKILL_DIR}/exit.py" show                          # the current trader/plan.json
+python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --stop atr:1.5        # needs the session's bars (Yahoo or --offline)
+python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --symbol RELIANCE --entry 1227.80 --or-high 1223.40 --or-low 1207.30
+python3 "${CLAUDE_SKILL_DIR}/exit.py" show                       # the current trader/plan.json
 ```
 
-Other flags: `--flat-by 15:55`, `--json`, `--now "2026-10-19 10:15"` (New
-York time), `--entry PRICE` with a waiting entry.json to plan ahead, `--setup
-level`, `--offline FILE` (a saved Yahoo chart JSON for an ATR stop).
+Other flags: `--flat-by 15:15`, `--json`, `--now "2026-10-19 09:50"` (IST),
+`--entry PRICE` with a waiting entry.json to plan ahead, `--setup level`,
+`--offline FILE` (a saved Yahoo chart JSON for an ATR stop).
 
 ## What it reads and writes
 
 | file | what |
 | --- | --- |
 | `trader/entry.json` | the trigger from bharat-entry: symbol, entry price, time, bar, opening range |
-| `trader/config.json` | `flat_by` (15:55) and `min_reward_risk` (1.0: a note here, bharat-risk enforces it) |
+| `trader/config.json` | `flat_by` (15:15) and `min_reward_risk` (1.0: a note here, bharat-risk enforces it) |
 | Yahoo chart API | only for an `atr:K` stop: the session's bars up to the entry bar, free and unofficial |
 | `trader/plan.json` | with `--write`: entry, stop and its rule, target and its R, risk a share, reward:risk, flat by. bharat-timemachine, bharat-budget and bharat-alerts read it |
 
@@ -59,16 +61,20 @@ level`, `--offline FILE` (a saved Yahoo chart JSON for an ATR stop).
 
 A level setup has no opening range to lean on, so it needs a stop you name.
 
-- **Rounding.** The stop rounds AWAY from the entry to the cent (down, for a
-  long). Risk = entry minus stop. Target = entry + R x risk, rounded half up
-  to the cent. `2R` by default; `1R`, `1.5R` or `price:X` also work.
+- **The tick.** NSE equity prices move in Rs 0.05. The stop rounds away from
+  the entry to the tick (down, for a long). Risk = entry minus stop. An R
+  target = entry + R x risk, rounded UP to the tick; your own target price
+  rounds to the nearest tick. `2R` by default; `1R`, `1.5R` or `price:X` also
+  work.
 - **Refused, with the reason.** A stop at or above the entry. A target at or
-  below it. A risk under 0.05% of the price: too tight to survive the
-  spread, normal wiggle would stop you out. An entry.json that has not
-  triggered (unless you give `--entry`). A short: v2 plans longs only.
-- **Flat by.** 15:55 by default (or `flat_by` in the config). Out by then,
-  win or lose, no overnight hold. On a 1:00 p.m. early close it moves up to
-  12:55. An entry at or after the flat-by time is refused.
+  below it. A risk under 0.05% of the price: too tight to survive the spread,
+  normal wiggle would stop you out. An entry.json that has not triggered
+  (unless you give `--entry`). A short: P1 plans longs only.
+- **Flat by.** 15:15 IST by default (or `flat_by` in the config). Out by
+  then, win or lose, no overnight hold. Zerodha squares off MIS positions
+  from 15:20, at its price and with a charge, so a flat-by after 15:20 gets a
+  note. A flat-by at or after the 15:30 close, or an entry at or after the
+  flat-by time, is refused.
 
 ## Steps
 
@@ -76,49 +82,52 @@ A level setup has no opening range to lean on, so it needs a stop you name.
    plans ahead at the level you expect.
 2. Use the default stop for an opening-range breakout unless the user names
    another. A level setup needs one: ask.
-3. Run `exit.py plan --write`. Read back the entry, the stop and its rule,
-   the target and its rule, the risk a share, reward:risk and flat by.
-4. If it refuses, say the reason and the fix (a wider stop, a farther
-   target). Never loosen anything on your own.
+3. Run `exit.py plan --write`. Read back the entry, the stop and its rule, the
+   target and its rule, the risk a share, reward:risk and flat by.
+4. If it refuses, say the reason and the fix (a wider stop, a farther target).
+   Never loosen anything on your own.
 5. Say once that the stop is a plan, not a guarantee.
-6. Hand off to `/bharat-timemachine` to replay the plan, then `/bharat-budget`
-   to size it to the max loss per trade. Offer `/bharat-alerts` for the stop,
-   the target and the flat-by time. Claude can keep `entry.py watch` running
-   in the background or on a `/loop` until a setup triggers, then come here.
+6. Hand off to `/bharat-timemachine` to replay the plan, then
+   `/bharat-budget` to size it to the max loss per trade, costs included.
+   Offer `/bharat-alerts` for the stop, the target and the flat-by time.
 
-## Example: the reel
+Claude can keep `entry.py watch` running in the background or on a `/loop`
+until a setup triggers, then come here.
 
-TSLA, Monday 2026-10-19. The entry is 364.18 at 10:15 AM (the 10:10 bar,
-bar 8) and the opening range is 354.47 to 362.18. `exit.py plan --stop
-or-mid --target 1R --write`:
+## Example
+
+RELIANCE, Monday 2026-10-19. The entry is 1227.80 at 9:50 AM (the 9:45 bar,
+bar 6) and the opening range is 1207.30 to 1223.40.
+`exit.py plan --stop or-mid --target 1R --write`:
 
 ```
-Exit plan: TSLA long, Mon 2026-10-19, opening-range breakout on 5-minute bars
-  Entry         $364.18 at 10:15 AM (bar 8)
-  Stop          $358.32  opening-range midpoint: ($362.18 + $354.47) / 2 = $358.325, rounded down
-  Target        $370.04  1R (one times the risk)
-  Risk a share  $5.86 (1.61% of the entry)
+Exit plan: RELIANCE long, Mon 2026-10-19, opening-range breakout on 5-minute bars
+  Entry         Rs 1,227.80 at 9:50 AM (bar 6)
+  Stop          Rs 1,215.35  opening-range midpoint: (Rs 1,223.40 + Rs 1,207.30) / 2 = Rs 1215.35
+  Target        Rs 1,240.25  1R (one times the risk)
+  Risk a share  Rs 12.45 (1.01% of the entry)
   Reward:risk   1.0
-  Flat by       15:55 ET, win or lose: no overnight hold
+  Flat by       15:15 IST, win or lose: no overnight hold
 ```
 
-The default 2R target would be 364.18 + 2 x 5.86 = 375.90. bharat-budget then
-sizes it: a $50 max loss per trade buys floor(50 / 5.86) = 8 shares.
+The midpoint lands on the tick, so nothing is rounded. The default 2R target
+would be 1227.80 + 2 x 12.45 = 1,252.70. An `atr:1.5` stop on the seven bars
+to the entry (ATR 7.457) is 1216.6142, rounded down to the tick: 1,216.60.
 
 ## Rules
 
 - The stop and the target are set before the entry, never after.
 - Never move a stop further from the entry once the trade is on.
-- Plain numbers only: entry, stop, target, risk a share, reward:risk. It
-  never prints a P&L or a return.
+- Plain numbers only: entry, stop, target, risk a share, reward:risk. It never
+  prints a P&L or a return.
 - Nothing here promises winning trades or money. A 1R target is not a
   prediction that the price gets there.
-- Long side only. v2 plans longs only.
+- Long side only. P1 plans longs only.
 
 ## What it never does
 
-It never places an order, never sizes a position, never widens a stop to
-make a plan pass, and never calls a stop a guarantee.
+It never places an order, never sizes a position, never widens a stop to make
+a plan pass, and never calls a stop a guarantee.
 
 ## Safety
 
