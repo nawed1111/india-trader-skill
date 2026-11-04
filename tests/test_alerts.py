@@ -294,6 +294,14 @@ class Options(unittest.TestCase):
         rings, _ = self.ev([rules["nifty-plan-target"]], {"NIFTY": {"price": 22830.0}}, "2026-10-21 12:30")
         self.assertIn("at or below your target", rings[0]["message"])
 
+    def test_the_09_15_alert_says_next_expiry_not_next_month(self):
+        r = {"id": "w", "symbol": "NIFTY26O1923100CE", "type": "expiry", "expiry": "2026-10-19", "at": "09:15"}
+        for now in ("2026-10-16 09:20", "2026-10-19 09:20"):
+            rings, _ = self.ev([r], {}, now)
+            self.assertEqual(len(rings), 1, now)
+            self.assertNotIn("month", rings[0]["message"])
+            self.assertIn("next expiry", rings[0]["message"])
+
     def test_the_15_00_expiry_alert_rings_on_expiry_day_only(self):
         r = {x["id"]: x for x in al.rules_from_plan(OPT_PLAN)}["nifty26oct23100ce-expiry-close"]
         rings, _ = self.ev([r], {}, "2026-10-27 15:00")

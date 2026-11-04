@@ -394,8 +394,8 @@ def evaluate(rules, quotes, status, state, now_utc):
             if when and status.get("opens") and local.time() >= at and not _rang_today(rung.get(rid), today):
                 sym = r["symbol"].upper()
                 msg = "%s expires %s. " % (sym, when)
-                msg += ("No new entry in it today; an open position must be closed or rolled to the next month."
-                        if day == exp else "Plan new entries in the next month's contract (it rolls over).")
+                msg += ("No new entry in it today; an open position must be closed or rolled to the next expiry."
+                        if day == exp else "Plan new entries in the next expiry's contract.")
                 rings.append({"id": rid, "symbol": sym, "message": msg})
                 rung[rid] = stamp
             continue
