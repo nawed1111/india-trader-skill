@@ -26,10 +26,18 @@ the clock, the costs and the broker are India's.
 
 ## Install
 
-In Claude Code, from a local copy of this repo:
+Paste this into Claude:
 
 ```
-/plugin marketplace add /path/to/india-trader-skill
+https://github.com/nawed1111/india-trader-skill
+
+install skill
+```
+
+Or as a plugin, in Claude Code:
+
+```
+/plugin marketplace add nawed1111/india-trader-skill
 /plugin install india-trader-skill@india-trader-skill
 ```
 
@@ -37,6 +45,7 @@ Installed as a plugin they show up as `/india-trader-skill:bharat-scanner`
 and so on. Copy the folders instead if you want plain `/bharat-scanner`:
 
 ```bash
+git clone https://github.com/nawed1111/india-trader-skill.git
 cp -r india-trader-skill/bharat-* ~/.claude/skills/
 ```
 

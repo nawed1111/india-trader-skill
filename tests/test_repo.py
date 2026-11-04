@@ -83,6 +83,9 @@ class Repo(unittest.TestCase):
             readme = " ".join(fh.read().split())
         self.assertTrue(readme.startswith("# The India Trader skill"))
         for line in (ABOUT, "github.com/Jakeschincariol/day-trader-skill", "## Fine print", "SEBI",
+                     "https://github.com/nawed1111/india-trader-skill install skill",
+                     "/plugin marketplace add nawed1111/india-trader-skill",
+                     "/plugin install india-trader-skill@india-trader-skill",
                      "not from a SEBI-registered adviser", "speculative business income", "static IP"):
             self.assertIn(line, readme)
         for sk in SKILLS:
