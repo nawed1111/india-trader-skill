@@ -2,6 +2,211 @@
 
 11 Claude skills for intraday trading on NSE: scan the market, track announcements, time every entry and exit, and replay every outcome before you risk a rupee.
 
-Work in progress. Ported from the US pack, the Day Trader skill
+Free, MIT, no signup. The tools are plain standard-library Python that read
+free public data: Yahoo Finance's charts for NSE stocks, NSE's own files and
+announcements, and NSE's results filings. Trading costs are Zerodha's,
+checked against its own calculator.
+
+One scans the NIFTY 50 (or all 2,392 EQ-series stocks) for setups. Another
+reads what each company filed with NSE. One watches a setup bar by bar from
+9:15 IST and tells you the moment to get in, and another sets your stop and
+your target, on the Rs 0.05 tick, before you do. The Time Machine replays
+the rest of the session 10,000 times from the stock's own recent bars, plus
+every past day the same setup fired. The budget and risk skills put
+Zerodha's charges into every loss, because on an intraday trade they are not
+small.
+
+And no trade goes through until you say yes. Nothing in this pack can place
+an order on its own. Paper trading on a local ledger is the default.
+
+This is the India port of the Day Trader skill by Jake Schincariol
 ([github.com/Jakeschincariol/day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill),
-MIT, by Jake Schincariol).
+MIT). The method and most of the code come from there; the market, the data,
+the clock, the costs and the broker are India's.
+
+## Install
+
+In Claude Code, from a local copy of this repo:
+
+```
+/plugin marketplace add /path/to/india-trader-skill
+/plugin install india-trader-skill@india-trader-skill
+```
+
+Installed as a plugin they show up as `/india-trader-skill:bharat-scanner`
+and so on. Copy the folders instead if you want plain `/bharat-scanner`:
+
+```bash
+cp -r india-trader-skill/bharat-* ~/.claude/skills/
+```
+
+Every skill folder works on its own: each carries its own copy of `india.py`
+(the NSE clock, holidays, symbols and costs). Project-local instead of global:
+copy the same folders into your repo's `.claude/skills/`. The tools need
+Python 3.8 or newer. Nothing to pip install, no API keys for the data.
+
+## The eleven
+
+| command | job | what it does |
+| --- | --- | --- |
+| `/bharat-scanner` | Chart Scanner | Scans NSE charts for setups: opening-range breakouts from 9:15, flags, oversold bounces; flags price bands and F&O bans. |
+| `/bharat-news` | News Monitor | Reads each stock's NSE corporate announcements and Yahoo headlines, and flags results, board meetings, deals. |
+| `/bharat-entry` | Entry Timer | Watches a setup bar by bar and tells you the moment to get in; warns near a price band. |
+| `/bharat-exit` | Exit Planner | Sets your stop and target before you enter, on the Rs 0.05 tick, flat by 15:15. |
+| `/bharat-timemachine` | Time Machine | Replays the trade 10,000 times plus every past time the setup fired. |
+| `/bharat-budget` | Budget Manager | Sizes every position to your budget and max loss, Zerodha's charges included. |
+| `/bharat-risk` | Risk Manager | Checks every trade against your limits, the costs, the entry window and the price band. |
+| `/bharat-broker` | Order Executor | Paper ledger by default; Zerodha through a self-hosted Kite MCP server, never without your yes. |
+| `/bharat-alerts` | Price Alerts | Rings on the stop, the target and 15:15; keeps the NSE clock and holidays. |
+| `/bharat-analyst` | Results Analyst | Reads quarterly results from NSE's filings: revenue, EBITDA, net profit, EPS, QoQ and YoY. |
+| `/bharat-insider` | Insider Tracker | SEBI insider disclosures, bulk and block deals, and FII/DII flows. |
+
+## How to use it
+
+Everything lands in a `trader/` folder in your project, and each skill reads
+what the last one wrote:
+
+```
+scanner -> news -> entry -> exit -> timemachine -> budget -> risk -> broker   (one trade)
+alerts: stop, target, flat by 15:15                                           (while it is open)
+news / analyst / insider                                                       (on a schedule)
+```
+
+An example, on real data: RELIANCE, Monday 19 October 2026 (2026-10-19).
+
+1. **`/bharat-scanner`** at 10:15 AM IST: of the NIFTY 50, 8 had closed above
+   their 15-minute opening range (9:15 to 9:30). RELIANCE is one: range
+   1,207.30 to 1,223.40; the 09:45 bar closed at 1,227.80, 0.36 % over the
+   top, at 9:50 AM.
+2. **`/bharat-news`**: the weekend's NSE filing is Saturday's "Updates"
+   (newspaper clippings for the Jio Platforms IPO). Yahoo has no headlines
+   for RELIANCE. Nothing pointed to results inside the trade.
+3. **`/bharat-entry`** watched RELIANCE bar by bar. At 9:47 it said waiting
+   (the 9:45 bar was still forming). At 9:50 it said triggered: the first
+   5-minute close above the range, 1,227.80. The bar traded 1.52 times the
+   range's volume (Yahoo reports 0 for the 9:15 bar, so the average skips it).
+4. **`/bharat-exit`** set the plan before the entry: stop at the range's
+   midpoint, 1,215.35, so 12.45 a share at risk; target one times that risk,
+   1,240.25; flat by 15:15 either way.
+5. **`/bharat-timemachine`** replayed the rest of the day 10,000 times to
+   15:15, each 5-minute candle drawn from RELIANCE's own candles at that time
+   of day over its previous 48 usable sessions (seed 19): target first
+   17.0 %, stop first 17.7 %, still open at 15:15 65.3 %. It also re-ran the
+   same rule on those 48 real sessions: it fired 22 times, 10 hit the target,
+   10 the stop, 2 neither. Its verdict: close to a coin flip, before costs.
+6. **`/bharat-budget`** with a Rs 2,00,000 account and a Rs 1,000 max loss per
+   trade: 73 shares. Their round-trip charges at the stop (brokerage Rs 40,
+   STT Rs 22, NSE Rs 5.48, GST Rs 8.22, SEBI Rs 0.18, stamp Rs 3) are
+   Rs 78.88, so the loss at the stop is 73 x 12.45 + 78.88 = Rs 987.73. Without
+   costs the max loss would have allowed 80 shares. It writes one bracket
+   order: buy 73 RELIANCE, NSE, MIS, stop-loss 1,215.35, take-profit 1,240.25.
+7. **`/bharat-risk`** checks it against your limits: the max loss with costs,
+   costs as a share of the reward (9 % here, the limit is 25 %), the daily
+   loss, trades per day, reward to risk, the 9:30 to 14:45 entry window, the
+   price band, position size and cash. PASS or BLOCK, with the reason.
+8. **`/bharat-broker`** shows you the ticket in plain words. You type yes for
+   that exact order. On paper it records the fill at the next bar's open in
+   `trader/portfolio.json`, with Zerodha's charges. Live, Claude calls the
+   Kite MCP server's `place_order` for the MIS entry and then one SL-M stop,
+   and Claude's own "Allow once / Deny" card asks you each time.
+9. **`/bharat-alerts`** rings on the stop, on the target (on Zerodha the
+   target is an alert, not a broker order) and at 15:15 to flatten whatever
+   is still open, before the broker's 15:20 square-off.
+
+## The tools
+
+All standard-library Python. The data tools read public endpoints and are
+polite about it.
+
+```bash
+python3 bharat-scanner/scan.py universe                                # 2,392 EQ-series stocks, EQUITY_L.csv
+python3 bharat-scanner/scan.py daily                                   # pre-market setups
+python3 bharat-scanner/scan.py orb --at 10:15                          # opening-range breakouts so far
+python3 bharat-news/news.py --tickers RELIANCE --hours 48              # NSE announcements, headlines, the move
+python3 bharat-entry/entry.py check RELIANCE --setup orb               # waiting / triggered / expired
+python3 bharat-entry/entry.py watch RELIANCE --every 30                # bar by bar until it triggers
+python3 bharat-exit/exit.py plan --stop or-mid --target 1R --write     # -> trader/plan.json
+python3 bharat-timemachine/timemachine.py run --write                  # 10,000 replays + the history
+python3 bharat-budget/size.py --write                                  # -> trader/orders.json
+python3 bharat-risk/check.py                                           # PASS / BLOCK per order
+python3 bharat-broker/ticket.py show                                   # the tickets, READY or not
+python3 bharat-alerts/alerts.py add --from-plan                        # stop, target, flat by 15:15
+python3 bharat-alerts/alerts.py check                                  # rings what hit, once
+python3 bharat-analyst/results.py RELIANCE                             # quarters, margins, growth
+python3 bharat-insider/insider.py new                                  # insider trades, deals, FII/DII
+```
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The tests run offline, on fixtures cut from real data fetched on 4 November
+2026: the NIFTY 50's 5-minute bars for 19 October, RELIANCE's 60 days of
+5-minute bars, NSE's equity list, price bands and ban list, NSE
+announcements, insider disclosures, deals and FII/DII figures, RELIANCE's
+quarterly XBRL filings, and three trades run through Zerodha's own brokerage
+calculator. They reproduce every number in the example above.
+`tools/probe.py` refetches the sources; `docs/p0-findings.md` says what each
+one returned and its quirks.
+
+## Fine print
+
+**Not financial advice**, and not from a SEBI-registered adviser. This is
+software that reads public data and does arithmetic. It does not know your
+situation and it cannot see the future. SEBI's own studies found that about
+7 in 10 individual intraday traders in the cash market lost money (FY23),
+and about 9 in 10 F&O traders lost money. You can lose money. Decide for
+yourself, and talk to a SEBI-registered adviser if you need advice.
+
+**No trade goes through until you say yes.** Only `/bharat-broker` can lead
+to an order, and only after `/bharat-risk` passes that exact order and you
+type yes for it in the chat. Set the Kite tools that place or cancel orders
+to "Needs approval" in Claude (Customize, Connectors, tool permissions),
+never "Always allow", so Claude's own "Allow once / Deny" card is a second
+check. No F&O, margin (MTF), short selling or MIS leverage unless you turn
+them on.
+
+**Paper first.** `"paper": true` is the default. India's brokers have no
+paper accounts, so the paper ledger is `trader/portfolio.json`, with
+Zerodha's charges taken out of every fill.
+
+**Live orders need a static IP.** Under SEBI's retail algo rules (in force
+since 1 April 2026), every order sent through a broker's API must come from
+a static IP you have registered with the broker. Zerodha's hosted MCP server
+has no order tools, so live trading needs your own copy of
+zerodha/kite-mcp-server, run from that IP, with your own Kite Connect key in
+its config and never in the chat. Zerodha has no bracket orders: the pack
+sends the entry, then one SL-M stop, and keeps the target as an alert, so two
+exit orders can never both fill.
+
+**The Time Machine is a simulation, not a prediction.** It is built from the
+stock's own last 60 days of 5-minute bars. The future can do things those 60
+days never did: results, a block deal, a price-band freeze, a headline. Its R
+leaves out costs; the budget and risk skills put them back. Treat its odds as
+a reality check, never as a promise.
+
+**A stop is a plan, not a guarantee.** In a fast market, across a gap or when
+a stock is frozen at its price band, a stop can fill well past its price, or
+not at all. The max loss shown is the loss at the stop price, with costs.
+
+**The data is free and unofficial.** Yahoo Finance's chart endpoint is not an
+official API, its NSE data has gaps (no 15:20 bar, an empty latest daily
+close for hours after the close, no volume on the 9:15 bar), and it can lag
+or rate-limit you. NSE's website blocks some scripted requests; the tools say
+so instead of guessing. Check anything that matters against your broker
+before you act on it.
+
+**Costs and taxes change.** The charges in `india.py` are Zerodha's published
+rates on 4 November 2026 (including the STT rise from the 2026 Budget for
+F&O). Check them against your contract note. Intraday equity profits are
+taxed as speculative business income, F&O as non-speculative business
+income. Nothing here is tax advice.
+
+**Calendar.** The NSE holiday list is in `india.py` for 2026, with the
+Muhurat session (Sunday 8 November 2026, 14:20 to 15:30). For other years
+the tools say the holiday list is unknown and treat the day as closed until
+it is added.
+
+**Insider trades and deals are public.** SEBI's insider-trading disclosures,
+bulk and block deals and FII/DII figures are published by NSE. The insider
+skill reads them quickly; it has no inside information.

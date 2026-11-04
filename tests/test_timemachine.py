@@ -30,7 +30,7 @@ PLAN = {"created_by": "bharat-exit", "symbol": "RELIANCE", "side": "buy", "date"
         "target": 1240.25, "target_r": 1.0, "target_label": "1R (one times the risk)",
         "risk_per_share": 12.45, "reward_risk": 1.0, "flat_by": "15:15"}
 
-# regression fingerprints of the seed-19 run (the algorithm itself is proven bit for bit against the reel's
+# regression fingerprints of the seed-19 run (the algorithm itself is proven bit for bit against the original
 # sim.py in the US pack; these pin that nothing here drifts)
 BANDS = "d59cd3ebd63876a1"
 PATHS = "d4780cbecd857084"

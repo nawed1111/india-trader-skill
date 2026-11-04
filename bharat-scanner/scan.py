@@ -404,7 +404,7 @@ def parse_ban(text):
 # ---------------------------------------------------------------- daily setups
 
 def rsi(closes, n=14):
-    """Wilder's RSI on closes (the same math as the reel's refs/scan.py)."""
+    """Wilder's RSI on closes (the same math as the US pack's scanner)."""
     if len(closes) < n + 1:
         return None
     g = [max(0.0, closes[i] - closes[i - 1]) for i in range(1, len(closes))]

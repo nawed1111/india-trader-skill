@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import unittest
 
 from _load import ROOT
@@ -77,19 +78,41 @@ class Repo(unittest.TestCase):
         self.assertEqual(market["name"], "india-trader-skill")
         self.assertEqual(market["plugins"][0]["name"], "india-trader-skill")
 
-    @unittest.skip("README rewritten in Task 15")
-    def test_readme_carries_the_reel_copy(self):
+    def test_readme_carries_the_pack(self):
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
             readme = " ".join(fh.read().split())
-        self.assertTrue(readme.startswith("# The Day Trader skill"))
-        for line in (ABOUT,
-                     "https://github.com/Jakeschincariol/day-trader-skill install skill",
-                     "/plugin marketplace add Jakeschincariol/day-trader-skill",
-                     "/plugin install day-trader-skill@day-trader-skill",
-                     "## Fine print"):
+        self.assertTrue(readme.startswith("# The India Trader skill"))
+        for line in (ABOUT, "github.com/Jakeschincariol/day-trader-skill", "## Fine print", "SEBI",
+                     "not from a SEBI-registered adviser", "speculative business income", "static IP"):
             self.assertIn(line, readme)
-        for s in SKILLS:
-            self.assertIn("/" + s, readme, s)
+        for sk in SKILLS:
+            self.assertIn("/" + sk, readme, sk)
+
+    def test_readme_example_numbers(self):
+        """Every number of the worked example, pinned by the skills' own tests, is in the README."""
+        import example_values as EX
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+
+        def forms(v):
+            if isinstance(v, str):
+                return {v, v.lstrip("0")}
+            out = set()
+            if isinstance(v, float) and v < 1:                  # TM odds are fractions; PCT_OVER is a percent
+                out |= {"%.1f %%" % (100 * v), "%.1f%%" % (100 * v)}
+            out |= {"%g" % v, "%.2f" % v, "{:,.2f}".format(v), "{:,}".format(v) if isinstance(v, int) else "%.2f" % v}
+            out.add(india_inr(v))
+            return out
+
+        def india_inr(v):
+            sys.path.insert(0, os.path.join(ROOT, "india"))
+            import india
+            return india.inr(v)[3:]
+
+        for name in dir(EX):
+            if name.isupper():
+                v = getattr(EX, name)
+                self.assertTrue(any(f in readme for f in forms(v)), "%s = %r is not in the README" % (name, v))
 
     def test_no_em_dashes_and_no_personal_email(self):
         for path in every_text_file():
