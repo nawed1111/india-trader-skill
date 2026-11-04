@@ -540,6 +540,7 @@ def size_options(plan, c, sym, budget, limit, cash, entry_plan, stop, target):
         "costs_at_target": costs_target, "max_loss": loss, "gain_at_target": gain,
         "flat_by": plan.get("flat_by") or c.get("flat_by"), "order_type": "limit", "refusal": refusal,
         "instrument": "opt", "lot": lot, "premium_source": plan.get("premium_source") or "estimated",
+        "stop_limit_ticks": int(_f(c.get("stop_limit_ticks")) or 10),
     }
     out.update({k: plan.get(k) for k in keep})
     return out
@@ -561,6 +562,9 @@ def bracket_order(s):
                  premium_source=s["premium_source"], oi=s["oi"], illiquid=s["illiquid"], iv=s["iv"])
     if s["order_type"] == "limit":
         o["limit_price"] = _price(s["entry"])
+    if s.get("instrument") == "opt":
+        # NSE takes no SL-M on options: the stop is SL, its limit stop_limit_ticks under the trigger (at least a tick)
+        o["stop_loss_limit_price"] = _price(max(round_paisa(s["stop"] - 0.05 * s["stop_limit_ticks"]), 0.05))
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "intraday trade")
     why = ("%s on %s: %d %s, bound by your %s (%d x %s + %s costs = %s at the stop)"
            % (setup, s["symbol"], s["qty"], "units" if s.get("instrument") in ("fut", "opt") else "shares",

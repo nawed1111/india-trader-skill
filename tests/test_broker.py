@@ -416,3 +416,66 @@ class ReviewFixes(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("quantity = the FILLED quantity", text)
         self.assertIn("If the stop is rejected or denied, the position has no stop: flatten it now", text)
+
+
+def _opt_order(**over):
+    size = load("bharat-budget", "size")
+    import test_budget as TB
+    o = size.bracket_order(size.size_trade(dict(TB.OPT_PLAN, premium_source="user"), TB.opt_cfg(),
+                                           today=EX.OPT_DATE))
+    o.update(over)
+    return o
+
+
+class Options(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.pf = os.path.join(self.d, "portfolio.json")
+        self.orders = os.path.join(self.d, "orders.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def test_a_limit_buy_then_a_stop_limit(self):
+        o = _opt_order()
+        self.assertEqual(o["stop_loss_limit_price"], "122.85")        # 10 ticks under the 123.35 trigger
+        calls = ticket.kite_calls(o)
+        base = {"variety": "regular", "exchange": "NFO", "tradingsymbol": EX.OPT_CONTRACT, "product": "MIS",
+                "validity": "DAY", "quantity": 65}
+        self.assertEqual(calls[0]["input"], dict(base, transaction_type="BUY", order_type="LIMIT", price=162.95))
+        self.assertEqual(calls[1]["input"], dict(base, transaction_type="SELL", order_type="SL", trigger_price=123.35,
+                                                 price=122.85))
+
+    def test_the_ticket_says_a_stop_limit_may_not_fill(self):
+        self.assertIn("may not fill in a fast move", "\n".join(ticket.plain_parts(_opt_order())))
+
+    def test_the_stop_limit_floor_is_one_tick(self):
+        size = load("bharat-budget", "size")
+        import test_budget as TB
+        p = dict(TB.OPT_PLAN, premium_source="user", entry=3.0, stop=0.30, target=6.0)
+        o = size.bracket_order(size.size_trade(p, TB.opt_cfg(min_reward_risk=None), today=EX.OPT_DATE))
+        self.assertEqual(o["stop_loss_limit_price"], "0.05")
+
+    def test_paper_round_trip_pays_the_premium_and_option_charges(self):
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
+        buy = india.leg_costs("opt", "buy", 65, EX.OPT_PREMIUM)["total"]
+        self.assertEqual(pf["cash"], round(200000 - 65 * EX.OPT_PREMIUM - buy, 2))
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "sell", 65, EX.OPT_TARGET, EX.OPT_DATE)
+        sell = india.leg_costs("opt", "sell", 65, EX.OPT_TARGET)["total"]
+        self.assertEqual(pf["cash"], round(200000 + 65 * (EX.OPT_TARGET - EX.OPT_PREMIUM) - buy - sell, 2))
+
+    def test_the_max_loss_uses_option_costs(self):
+        self.assertEqual(ticket.max_loss(_opt_order())[0], EX.OPT_MAX_LOSS)
+
+    def test_flatten_an_option_needs_a_limit(self):
+        ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
+        args = ["flatten", "--symbol", EX.OPT_CONTRACT, "--orders", self.orders, "--portfolio", self.pf,
+                "--plan", os.path.join(self.d, "none.json"), "--now", "2026-10-21 15:15"]
+        code, _, err = run(args)
+        self.assertEqual(code, 1)
+        self.assertIn("--limit", err)
+        code, _, err = run(args + ["--limit", "150"])
+        self.assertEqual(code, 0, err)
+        with open(self.orders) as fh:
+            o = json.load(fh)["orders"][0]
+        self.assertEqual((o["exchange"], o["type"], o["limit_price"], o["instrument"]), ("NFO", "limit", "150.00", "opt"))

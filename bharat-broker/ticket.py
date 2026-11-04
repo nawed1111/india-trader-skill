@@ -70,13 +70,15 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
 YES_WORDS = ("yes", "y")
 SEGMENT = "eq_intraday"
 FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
+OPT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
 FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
               "fut_price_source", "right", "strike", "premium_source", "oi", "illiquid", "iv")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
 MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)
 
 
 def segment_of(symbol):
-    return "fut" if FUT_NAME.match(str(symbol or "").upper()) else SEGMENT
+    s = str(symbol or "").upper()
+    return "fut" if FUT_NAME.match(s) else "opt" if OPT_NAME.match(s) else SEGMENT
 KITE_TYPES = {"market": "MARKET", "limit": "LIMIT", "stop": "SL-M", "stop_limit": "SL"}
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
@@ -196,10 +198,13 @@ def kite_calls(order):
         entry["market_protection"] = MARKET_PROTECTION
     calls = [{"when": "now", "tool": "place_order", "input": entry}]
     if is_bracket(order) and order.get("stop_loss_stop_price") is not None:
-        calls.append({"when": "after the entry fills", "tool": "place_order",
-                      "input": dict(base, transaction_type="SELL" if side == "BUY" else "BUY", quantity=qty,
-                                    order_type="SL-M", trigger_price=float(order["stop_loss_stop_price"]),
-                                    market_protection=MARKET_PROTECTION)})
+        stop = dict(base, transaction_type="SELL" if side == "BUY" else "BUY", quantity=qty,
+                    trigger_price=float(order["stop_loss_stop_price"]))
+        if order.get("stop_loss_limit_price") is not None:   # SL: options take no SL-M
+            stop.update(order_type="SL", price=float(order["stop_loss_limit_price"]))
+        else:
+            stop.update(order_type="SL-M", market_protection=MARKET_PROTECTION)
+        calls.append({"when": "after the entry fills", "tool": "place_order", "input": stop})
     return calls
 
 
@@ -233,7 +238,7 @@ def max_loss(order):
     if not entry:
         return None, stop
     risk = abs(entry - stop)
-    cost = india.round_trip(SEGMENT, q, entry, stop)["total"]
+    cost = india.round_trip(segment_of(order.get("symbol")), q, entry, stop)["total"]
     return round(q * int(round(risk * 100)) / 100.0 + cost, 2), stop
 
 
@@ -249,7 +254,8 @@ def plain_parts(order):
         if order.get("stop_loss_stop_price") is not None:
             leg = "stop-loss %s" % _p(order["stop_loss_stop_price"])
             if order.get("stop_loss_limit_price") is not None:
-                leg += " (limit %s)" % _p(order["stop_loss_limit_price"])
+                leg += (" (a stop-limit, limit %s: it may not fill in a fast move, when the price jumps past the "
+                        "limit)" % _p(order["stop_loss_limit_price"]))
             parts.append(leg)
         if order.get("take_profit_limit_price") is not None:
             parts.append("take-profit %s" % _p(order["take_profit_limit_price"]))
@@ -413,7 +419,7 @@ def render(order, idx, total, cfg, risk, state, today):
             for l in json.dumps(c["input"], indent=2).splitlines():
                 lines.append("      " + l)
         if is_bracket(order):
-            lines.append("  Zerodha has no bracket order: the SL-M stop goes in after the entry fills. The")
+            lines.append("  Zerodha has no bracket order: the stop goes in after the entry fills. The")
             lines.append("  target %s is an alert (bharat-alerts); taking it is a new sell ticket, after"
                          % _p(order.get("take_profit_limit_price")))
             lines.append("  cancelling the stop, so two exits can never both fill.")
@@ -717,13 +723,21 @@ def cmd_flatten(a):
     plan = read_json(a.plan, "plan", required=False) or {}
     mine = sym in (str(plan.get("symbol", "")).upper(), str(plan.get("contract", "")).upper())
     flat_by = (plan.get("flat_by") if mine else None) or cfg.get("flat_by") or "15:15"
-    fut = segment_of(sym) == "fut"
-    order = {"symbol": sym, "exchange": "NFO" if fut else "NSE", "product": "MIS", "side": "sell", "qty": _str_num(qty),
-             "type": "market", "time_in_force": "day",
+    seg = segment_of(sym)
+    fut = seg == "fut"
+    if seg == "opt" and a.limit is None:
+        raise TicketError("an option is flattened at a limit, never market (a market sell can fill far under its "
+                          "value): read the bid on Kite and pass --limit PRICE")
+    if a.limit is not None and (_f(a.limit) or 0) <= 0:
+        raise TicketError("--limit wants a price above 0")
+    order = {"symbol": sym, "exchange": "NSE" if seg == SEGMENT else "NFO", "product": "MIS", "side": "sell",
+             "qty": _str_num(qty), "type": "limit" if a.limit is not None else "market", "time_in_force": "day",
              "why": "flat by %s IST: closes the %s intraday trade before the broker's 15:20 square-off "
                     "(qty from %s)" % (flat_by, sym, source)}
-    if fut:
-        order["instrument"] = "fut"
+    if a.limit is not None:
+        order["limit_price"] = _p(a.limit)
+    if seg != SEGMENT:
+        order["instrument"] = seg
         if mine and plan.get("lot"):
             order["lot"] = int(plan["lot"])
     old = read_json(a.orders, "orders", required=False)
@@ -742,7 +756,7 @@ def cmd_flatten(a):
     print("  1. bharat-risk: check.py. A sell that only closes what you hold is never blocked by the daily")
     print("     limits or the entry window.")
     print("  2. ticket.py show, then the user's yes for this one order.")
-    print("  3. Live: if the SL-M stop is still open, cancel it FIRST (get_orders, then cancel_order, Needs")
+    print("  3. Live: if the stop (SL-M, or SL for an option) is still open, cancel it FIRST (get_orders, then cancel_order, Needs")
     print("     approval), or the stop and this sell could both fill and leave you short. Then place_order")
     print("     with the ticket. Paper: record the fill with ticket.py fill.")
     return 0
@@ -819,6 +833,7 @@ def main(argv=None):
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--plan", default="trader/plan.json")
     p.add_argument("--config", default="trader/config.json")
+    p.add_argument("--limit", help="sell at this limit (required for an option)")
     clock(p)
     p = sub.add_parser("log", help="today's decisions")
     p.add_argument("--state", default="trader/state/broker.json")
