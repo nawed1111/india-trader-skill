@@ -27,3 +27,17 @@ MAX_LOSS_LIMIT = 1000   # max loss per trade
 QTY = 73
 COSTS_AT_STOP = 78.88
 MAX_LOSS = 987.73       # 73 x 12.45 + 78.88
+
+# Index futures (P2): NIFTY, Wed 21 Oct 2026, the session after the Dussehra holiday
+FUT_SYMBOL = "NIFTY"
+FUT_DATE = "2026-10-21"
+FUT_OR_HIGH = 23086.75
+FUT_OR_LOW = 22981.35
+FUT_TRIGGER_AT = "9:35 AM"
+FUT_TRIGGER_CLOSE = 23115.65   # the index
+FUT_CONTRACT = "NIFTY26OCTFUT"
+FUT_EXPIRY = "2026-10-27"
+FUT_LOT = 65
+FUT_BASIS_DATE = "2026-10-19"  # the last session's bhavcopy
+FUT_BASIS = 22895.20 / 22888.95
+FUT_PRICE = 23121.95           # 23115.65 x basis, tick 0.05

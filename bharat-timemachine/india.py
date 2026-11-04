@@ -100,6 +100,15 @@ def session(d):
     return datetime.combine(d, o, IST), datetime.combine(d, c, IST)
 
 
+def prev_trading_day(d):
+    """The last trading day strictly before day d, or None within 30 days."""
+    for k in range(1, 31):
+        p = d - timedelta(days=k)
+        if trading_day(p)[0]:
+            return p
+    return None
+
+
 def next_open(d):
     """The first session open strictly after day d (IST datetime), or None
     when no known day follows within 30 days."""

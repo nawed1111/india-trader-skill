@@ -433,6 +433,81 @@ class Watch(unittest.TestCase):
         self.assertIn("Stopping after 5 failed reads", lines[-1])
 
 
+P2 = os.path.join(FIX, "p2")
+NSEI = os.path.join(P2, "yahoo-NSEI-5m.json")
+BHAV19 = os.path.join(P2, "fo-bhavcopy-20261019.csv.zip")
+BHAV16 = os.path.join(P2, "fo-bhavcopy-20261016.csv.zip")
+
+
+class Futures(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.cwd = os.getcwd()
+        os.chdir(self.d)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.d)
+
+    def fut(self, *extra):
+        return run(["check", "NIFTY", "--instrument", "fut", "--offline", NSEI, "--now", "2026-10-21 09:35",
+                    "--write"] + list(extra))
+
+    def test_the_example_prices_the_future_from_the_last_session(self):
+        code, text, _ = self.fut("--bhavcopy", BHAV19)
+        self.assertEqual(code, 0, text)
+        self.assertIn("TRIGGERED 9:35 AM at Rs %.2f" % EX.FUT_TRIGGER_CLOSE, text)
+        self.assertIn(EX.FUT_CONTRACT, text)
+        with open(os.path.join("trader", "entry.json")) as fh:
+            e = json.load(fh)
+        self.assertEqual(e["instrument"], "fut")
+        self.assertEqual(e["price"], EX.FUT_TRIGGER_CLOSE)  # the signal stays on the index
+        f = e["future"]
+        self.assertEqual((f["contract"], f["expiry"], f["lot"], f["basis_date"], f["price"]),
+                         (EX.FUT_CONTRACT, EX.FUT_EXPIRY, EX.FUT_LOT, EX.FUT_BASIS_DATE, EX.FUT_PRICE))
+        self.assertAlmostEqual(f["basis_ratio"], EX.FUT_BASIS, places=9)
+        self.assertFalse(f["estimated"])
+        self.assertEqual(f["source"], "bhavcopy")
+
+    def test_a_given_futures_price_wins(self):
+        code, text, _ = self.fut("--bhavcopy", BHAV19, "--fut-price", "23050.10")
+        self.assertEqual(code, 0, text)
+        with open(os.path.join("trader", "entry.json")) as fh:
+            f = json.load(fh)["future"]
+        self.assertEqual((f["price"], f["source"], f["estimated"]), (23050.10, "user", False))
+
+    def test_a_bhavcopy_two_sessions_old_is_estimated(self):
+        code, text, _ = self.fut("--bhavcopy", BHAV16)
+        self.assertEqual(code, 0, text)
+        self.assertIn("estimated from 2026-10-16", text)
+        with open(os.path.join("trader", "entry.json")) as fh:
+            f = json.load(fh)["future"]
+        self.assertTrue(f["estimated"])
+        self.assertEqual(f["basis_date"], "2026-10-16")
+
+    def test_on_expiry_day_it_is_the_next_contract(self):
+        with open(os.path.join(FIX, "p0", "fo-bhavcopy-20261103.csv.zip"), "rb") as fh:
+            rows = entry.india.parse_bhavcopy(fh.read())
+        f = entry.future_leg(rows, "NIFTY", datetime.date(2026, 11, 23), 23800.0)
+        self.assertEqual(f["contract"], "NIFTY26DECFUT")
+        self.assertTrue(f["estimated"])  # a 3 Nov basis on 23 Nov
+        self.assertNotIn("rolls over", " ".join(f["warnings"]))
+
+    def test_the_day_before_expiry_warns_it_rolls_over(self):
+        with open(os.path.join(FIX, "p0", "fo-bhavcopy-20261103.csv.zip"), "rb") as fh:
+            rows = entry.india.parse_bhavcopy(fh.read())
+        f = entry.future_leg(rows, "NIFTY", datetime.date(2026, 11, 20), 23800.0)
+        self.assertEqual(f["contract"], "NIFTY26NOVFUT")
+        self.assertIn("rolls over", " ".join(f["warnings"]))
+        self.assertIn("NIFTY26DECFUT", " ".join(f["warnings"]))
+
+    def test_fut_needs_an_index(self):
+        code, _, err = run(["check", "RELIANCE", "--instrument", "fut", "--offline", REL,
+                            "--now", "2026-10-19 09:50", "--bhavcopy", BHAV19])
+        self.assertEqual(code, 1)
+        self.assertIn("NIFTY or BANKNIFTY", err)
+
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()

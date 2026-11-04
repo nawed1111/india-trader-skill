@@ -170,6 +170,10 @@ class Contracts(unittest.TestCase):
         self.assertTrue(india.is_expiry_day(self.rows, "NIFTY", date(2026, 11, 23)))
         self.assertFalse(india.is_expiry_day(self.rows, "NIFTY", date(2026, 11, 24)))  # holiday
 
+    def test_prev_trading_day(self):
+        self.assertEqual(india.prev_trading_day(date(2026, 10, 21)), date(2026, 10, 19))  # 20 Oct holiday
+        self.assertEqual(india.prev_trading_day(date(2026, 10, 19)), date(2026, 10, 16))  # weekend
+
     def test_basis_ratio(self):
         f = india.futures(self.rows, "NIFTY")[0]
         self.assertEqual(india.basis_ratio(f), 23780.50 / 23810.85)
