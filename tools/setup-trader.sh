@@ -95,10 +95,24 @@ ORDER_TOOLS = ",".join(ORDER_TOOL_NAMES)
 NEEDS_APPROVAL = ["mcp__kite__" + t for t in ORDER_TOOL_NAMES]
 
 
+def missing_order_tools(excluded):
+    """The order tools an EXCLUDED_TOOLS value leaves on. The server trims the spaces around each name."""
+    have = {t.strip() for t in (excluded or "").split(",")}
+    return [t for t in ORDER_TOOL_NAMES if t not in have]
+
+
 def with_order_tools(excluded):
     """An EXCLUDED_TOOLS value plus any order tool it leaves out."""
-    have = [t for t in (excluded or "").split(",") if t]
-    return ",".join(have + [t for t in ORDER_TOOL_NAMES if t not in have])
+    kept = (excluded or "").strip().rstrip(",")
+    return ",".join(([kept] if kept else []) + missing_order_tools(excluded))
+
+
+def write_key_file(lines):
+    os.makedirs(os.path.dirname(E["KITE_ENV"]), mode=0o700, exist_ok=True)
+    fd = os.open(E["KITE_ENV"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.chmod(E["KITE_ENV"], 0o600)
 
 
 def load_json(path):
@@ -140,7 +154,8 @@ if E["OS"] == "mac" and os.path.exists(E["SERVICE"]):
     with open(E["SERVICE"], "rb") as fh:
         old.insert(0, plistlib.load(fh).get("EnvironmentVariables") or {})
 
-# The key file: only you can read it. Kept as it is once your keys are in.
+# The key file: only you can read it. Kept once your keys are in, except that an EXCLUDED_TOOLS line
+# gains any order tool it leaves on (a line there means the order tools are meant to be off).
 have = read_env(E["KITE_ENV"]) if os.path.exists(E["KITE_ENV"]) else None
 moved = next((e for e in old if real(e)), None)
 if have is None or (not real(have) and moved):
@@ -152,21 +167,21 @@ if have is None or (not real(have) and moved):
              "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"],
              # always, moved keys too: an old config without the line never chose to go live
              "EXCLUDED_TOOLS=" + with_order_tools(keys.get("EXCLUDED_TOOLS"))]
-    os.makedirs(os.path.dirname(E["KITE_ENV"]), mode=0o700, exist_ok=True)
-    fd = os.open(E["KITE_ENV"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write("\n".join(lines) + "\n")
-    os.chmod(E["KITE_ENV"], 0o600)
+    write_key_file(lines)
     print("   key file: " + E["KITE_ENV"] + (" (your keys, moved from the old setup)" if moved else " (placeholder keys)"))
     if moved:
         print("   the order tools are OFF. If you were trading live, delete the EXCLUDED_TOOLS line in that file,")
         print("   then restart the server: " + E["RESTART"])
 else:
     print("   key file kept: " + E["KITE_ENV"])
-    if have.get("EXCLUDED_TOOLS") and with_order_tools(have["EXCLUDED_TOOLS"]) != have["EXCLUDED_TOOLS"]:
-        print("   note: its EXCLUDED_TOOLS line leaves some order tools on. To switch them all off, make it")
-        print("      EXCLUDED_TOOLS=" + with_order_tools(have["EXCLUDED_TOOLS"]))
-        print("   then restart the server: " + E["RESTART"])
+    add = missing_order_tools(have["EXCLUDED_TOOLS"]) if have.get("EXCLUDED_TOOLS", "").strip() else []
+    if add:   # an older line, from before the GTT tools were in it: GTT orders are orders too
+        with open(E["KITE_ENV"]) as fh:
+            text = fh.read().splitlines()
+        write_key_file([("EXCLUDED_TOOLS=" + with_order_tools(l.strip().partition("=")[2])
+                         if l.strip().partition("=")[0] == "EXCLUDED_TOOLS" else l) for l in text])
+        print("   its EXCLUDED_TOOLS line now switches off every order tool, GTT orders included (added "
+              + ", ".join(add) + ")")
 
 # The service: started at login, restarted if it stops (it exits while another copy still holds port 8080)
 exe = E["KITE_BIN"]
