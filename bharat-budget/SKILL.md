@@ -155,6 +155,29 @@ sent to the broker.
 - Free Yahoo prices are unofficial and can lag. The broker's price is the one that fills.
 - Costs are the published rates on the date in `india.py`. Taxes and charges change: check them against the broker's contract note.
 
+## Index futures (P2)
+
+A futures plan (`instrument: fut`, NIFTY or BANKNIFTY) is sized in whole
+lots, and only with `"allow_fno": true`. The lots are the smallest of:
+
+| limit | how |
+| --- | --- |
+| max loss | lots x lot x risk a unit + Zerodha's futures charges at the stop <= `max_loss_per_trade_inr` |
+| margin | (cash - buffer) / `margin_per_lot_inr[SYMBOL]` |
+| max lots | `max_lots` (default 1) |
+| max order | `max_fut_notional_inr`, only if you set it |
+
+`margin_per_lot_inr` (`{"NIFTY": ..., "BANKNIFTY": ...}`) is entered by the
+user from Zerodha's margin calculator (zerodha.com/margin-calculator/SPAN);
+MIS margin for F&O equals NRML. There is no default: no figure means a
+refusal that names the key. The position cap and `max_order_inr` do not
+apply (a lot is worth far more than its margin). The order is `exchange`
+NFO, `product` MIS, `symbol` the contract, `qty` lots x lot, with
+`instrument`, `underlying`, `lots`, `lot`, `expiry`, `margin`.
+
+One NIFTY lot on the 21 Oct 2026 example risks Rs 6,201.78 with costs: the
+default Rs 1,000 max loss refuses it. Say so; never raise a limit for the user.
+
 ## What it never does
 
 It never places, approves or schedules an order, never raises a limit on its

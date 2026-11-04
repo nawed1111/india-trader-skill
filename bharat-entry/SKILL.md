@@ -133,6 +133,25 @@ thin and nothing triggers by 9:52.
   reset it.
 - Never call an entry early because a bar looks like it will close above.
 
+## Index futures (P2)
+
+`check NIFTY --instrument fut` (or BANKNIFTY) reads the signal on the index
+bars as usual and adds a `future` block to the result and to
+`trader/entry.json`: `contract`, `expiry`, `lot`, `basis_ratio`,
+`basis_date`, `price`, `source`, `estimated`, `warnings`.
+
+- The contract is the nearest future that does not expire today, from NSE's
+  F&O bhavcopy (`--bhavcopy FILE`, default: download the last session's).
+- `price` = the trigger close x the basis (futures close / index close in
+  that bhavcopy), on the Rs 0.05 tick. It is an estimate: the basis moves in
+  the day (75 points on 21 Oct 2026). `--fut-price P` (the price on Kite)
+  wins and is not an estimate.
+- A bhavcopy older than the last session sets `estimated` with a warning;
+  bharat-risk blocks a market entry on it.
+- A contract that expires on the next trading day warns that it rolls over
+  and names the next one.
+- `watchlist` is for stocks; check the indices one at a time.
+
 ## What it never does
 
 It never places an order, never sizes a position, never sets the stop (that

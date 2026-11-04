@@ -61,9 +61,16 @@ quote files (`yahoo-<SYMBOL>.json`) instead of the network.
 | `pct_move` | moved `pct` percent from the previous close (or `ref`), optional `direction` up or down | once per day at most |
 | `time` | the IST clock passed `at` ("15:15") on a trading day | once per trading day |
 | `opening_bell` | NSE is open | once per trading day |
+| `expiry` | on a futures contract's `expiry` day and the trading day before, from `at` (default 09:15) | once per day |
 
 A rule with `"date"` is watched on that IST date only; `--from-plan` rules
 carry the plan's date, so yesterday's stop never rings today.
+
+For a futures plan, `--from-plan` puts the stop and target alerts on the
+index levels (the quotes are the index; the futures level is in the note)
+and adds an `expiry` rule for the contract, with no date, so it rings on
+the day before expiry and on expiry day (from the bhavcopy's dates: 20 and
+23 Nov 2026 for NIFTY26NOVFUT, since 24 Nov is a holiday).
 
 ## Quotes
 

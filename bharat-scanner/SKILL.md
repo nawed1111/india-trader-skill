@@ -153,6 +153,13 @@ RELIANCE and Claude hands it to `/bharat-news RELIANCE`, then
 - Never print a P&L, a return or a profit figure.
 - A hit is stale once the price has moved on. Re-run before acting on it.
 
+## Index futures (P2)
+
+`scan.py orb --symbols NIFTY,BANKNIFTY` scans the indices themselves
+(`^NSEI`, `^NSEBANK`). A hit there is the signal for an index futures
+trade: `/bharat-entry check NIFTY --instrument fut` prices the contract.
+Index volume on Yahoo is always 0, so do not use a volume filter on them.
+
 ## What it never does
 
 It never places, sizes or checks an order, never says which stock to buy,
