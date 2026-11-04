@@ -83,10 +83,10 @@ morning before 9:15.
 
 Monday 19 Oct 2026, RELIANCE, checked at 9:30 AM IST: the weekend's NSE
 filing is Saturday's "Updates" at 19:32 (newspaper clippings of the Jio
-Platforms IPO advertisement). Yahoo has no headlines for RELIANCE. The board
-meeting for the quarter's results is set for 30 Oct, so a trade on 19 Oct is
-in and out before then. When a symbol has no news, say so rather than
-padding the brief.
+Platforms IPO advertisement). Yahoo has no headlines for RELIANCE. The
+results board meeting (30 Oct) was only announced on 27 Oct, so that morning
+nothing pointed to results inside the trade. When a symbol has no news, say
+so rather than padding the brief.
 
 ## What it never does
 
