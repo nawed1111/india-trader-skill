@@ -250,27 +250,25 @@ class OptionsMath(unittest.TestCase):
             self.assertLess(abs(v * 100 - r["nse_iv"]), 0.5, r)
 
     def test_option_symbols(self):
-        self.assertEqual(india.option_symbol("NIFTY", date(2026, 11, 9), 24400, "PE", weekly=True), "NIFTY26N0924400PE")
-        self.assertEqual(india.option_symbol("NIFTY", date(2026, 11, 23), 24400, "CE", weekly=False),
-                         "NIFTY26NOV24400CE")
         self.assertEqual(india.parse_option_symbol("NIFTY26O1923100CE"),
                          {"symbol": "NIFTY", "expiry": date(2026, 10, 19), "month": "2026-10", "strike": 23100.0,
                           "right": "CE", "weekly": True})
         self.assertEqual(india.parse_option_symbol("BANKNIFTY26OCT55000PE")["expiry"], None)
         self.assertIsNone(india.parse_option_symbol("NIFTY26OCTFUT"))
-        n, monthly = 0, {}
+        n = 0
         for r in self.r19:
             if r["kind"] == "opt" and r["symbol"] in ("NIFTY", "BANKNIFTY"):
-                key = (r["symbol"], r["expiry"])
-                if key not in monthly:
-                    monthly[key] = india.is_monthly(self.r19, *key)
-                weekly = not monthly[key]
-                self.assertEqual(india.option_symbol(r["symbol"], r["expiry"], r["strike"], r["right"], weekly),
-                                 r["contract"])
                 p = india.parse_option_symbol(r["contract"])
-                self.assertEqual((p["strike"], p["right"], p["weekly"]), (r["strike"], r["right"], weekly))
+                self.assertIsNotNone(p, r["contract"])
+                self.assertEqual((p["symbol"], p["strike"], p["right"], p["month"]),
+                                 (r["symbol"], r["strike"], r["right"], r["expiry"].strftime("%Y-%m")))
+                self.assertIn(p["expiry"], (None, r["expiry"]))
                 n += 1
         self.assertGreater(n, 1000)
+
+    def test_freeze_limits(self):
+        self.assertEqual(india.FREEZE_QTY["NIFTY"] // 65, 27)
+        self.assertEqual(india.FREEZE_QTY["BANKNIFTY"], 900)
 
     def test_strikes(self):
         ks = india.strikes(self.r19, "NIFTY", date(2026, 10, 27))

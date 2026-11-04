@@ -253,6 +253,9 @@ def band_ok(price, prev_close, band_pct):
 
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 BHAV_KIND = {"IDF": "fut", "STF": "fut", "IDO": "opt", "STO": "opt"}
+# NSE's freeze quantity: the most units one F&O order may carry (NSE/FAOP/77189,
+# from 2 Nov 2026). NSE revises it each quarter.
+FREEZE_QTY = {"NIFTY": 1800, "BANKNIFTY": 900}
 
 
 def _num(x):
@@ -371,13 +374,6 @@ WEEK_CODE = "123456789OND"
 OPT_NAME = re.compile(r"^([A-Z&\-]+?)(\d{2})(?:([1-9OND])(\d{2})|([A-Z]{3}))(\d+(?:\.\d+)?)(CE|PE)$")
 
 
-def option_symbol(symbol, expiry, strike, right, weekly):
-    """NIFTY26N0924400PE (weekly: YY, month code 1-9/O/N/D, DD) or NIFTY26NOV24400CE (monthly)."""
-    k = ("%d" % strike) if float(strike) == int(strike) else ("%g" % strike)
-    when = ("%s%02d" % (WEEK_CODE[expiry.month - 1], expiry.day)) if weekly else MONTHS[expiry.month - 1]
-    return "%s%02d%s%s%s" % (symbol, expiry.year % 100, when, k, right)
-
-
 def parse_option_symbol(text):
     """{symbol, expiry (None for a monthly name), month YYYY-MM, strike, right, weekly}, or None."""
     m = OPT_NAME.match(str(text or "").upper())
@@ -399,11 +395,6 @@ def _options(rows, symbol, expiry=None):
 
 def option_expiries(rows, symbol):
     return sorted({r["expiry"] for r in _options(rows, symbol)})
-
-
-def is_monthly(rows, symbol, expiry):
-    """The last expiry of its month for that symbol (NSE names it NIFTY26OCT..., not a weekly)."""
-    return expiry == max(e for e in option_expiries(rows, symbol) if (e.year, e.month) == (expiry.year, expiry.month))
 
 
 def strikes(rows, symbol, expiry):
