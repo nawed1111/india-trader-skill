@@ -87,6 +87,16 @@ class Costs(unittest.TestCase):
         self.assertEqual(india.RATES["checked"], "2026-11-04")
 
 
+class Rupees(unittest.TestCase):
+    def test_lakh_grouping(self):
+        self.assertEqual(india.inr(200000), "Rs 2,00,000")
+        self.assertEqual(india.inr(89629.4), "Rs 89,629.40")
+        self.assertEqual(india.inr(12345678.5), "Rs 1,23,45,678.50")
+        self.assertEqual(india.inr(987.73), "Rs 987.73")
+        self.assertEqual(india.inr(-1000), "-Rs 1,000")
+        self.assertEqual(india.inr(1227.8, paise=True), "Rs 1,227.80")
+
+
 class Prices(unittest.TestCase):
     def test_tick_round(self):
         self.assertEqual(india.tick_round(1402.33), 1402.35)

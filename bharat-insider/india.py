@@ -195,6 +195,27 @@ def round_trip(segment, qty, buy, sell, rates=None):
     return _costs(_rates(segment, rates), qty * buy, qty * sell)
 
 
+def inr(x, paise=None):
+    """Rupees the Indian way: Rs 2,00,000 and Rs 1,227.80. paise=None shows
+    them only when there are any."""
+    x = float(x)
+    sign = "-" if x < 0 else ""
+    x = abs(x)
+    if paise is None:
+        paise = abs(x - round(x)) >= 0.005
+    whole, frac = ("%.2f" % x).split(".") if paise else (str(int(round(x))), "")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            groups.insert(0, head)
+        whole = ",".join(groups) + "," + tail
+    return "%sRs %s%s" % (sign, whole, ("." + frac) if paise else "")
+
+
 # ----------------------------------------------------------------- prices
 
 def tick_round(price, tick=0.05, mode="nearest"):
