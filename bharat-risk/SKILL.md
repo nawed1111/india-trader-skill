@@ -89,7 +89,8 @@ How the numbers work:
 
 - **The entry it measures from**: the limit price for a limit order. For a
   market order, the HIGHER of the plan's entry and a fresh price from
-  `trader/prices.json` (under 15 minutes old).
+  `trader/prices.json` (under 15 minutes old); for a short sell
+  (`"allow_short": true`) the LOWER, since its stop is above it.
 - **Costs** are Zerodha's intraday equity charges from `india.py` (brokerage,
   STT, NSE transaction and investor protection charges, SEBI fee, GST,
   stamp duty), the same numbers bharat-budget sized with. The loss at the
