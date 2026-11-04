@@ -304,6 +304,15 @@ class Futures(unittest.TestCase):
         self.assertEqual((p["entry"], p["stop"], p["target"]), (23050.00, 22968.35, 23131.65))
         self.assertEqual(p["fut_price_source"], "user")
 
+    def test_entry_flag_is_the_futures_fill(self):
+        self.entry_fut()
+        code, _, err = run(exitp, ["plan", "--now", "2026-10-21 09:36", "--stop", "or-mid", "--target", "1R",
+                                   "--entry", "23050", "--write"])
+        self.assertEqual(code, 0, err)
+        p = self.read_plan()
+        self.assertEqual((p["entry"], p["stop"], p["target"]), (23050.00, 22968.35, 23131.65))
+        self.assertEqual((p["index"]["entry"], p["fut_price_source"]), (EX.FUT_TRIGGER_CLOSE, "user"))
+
     def test_a_level_plan_still_needs_a_named_stop(self):
         self.entry_fut()
         with open(os.path.join("trader", "entry.json")) as fh:

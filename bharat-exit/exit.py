@@ -535,6 +535,12 @@ def gather(a):
                 "instrument": doc.get("instrument") or "eq", "future": doc.get("future")}
         if info["instrument"] == "fut" and not info["future"]:
             raise PlanError("%s is a futures entry with no future block: re-run bharat-entry --instrument fut" % path)
+        if info["instrument"] == "fut":
+            if doc.get("status") != "triggered":
+                raise PlanError("%s is a futures entry that has not triggered: plan it once the index triggers" % path)
+            info["entry"] = doc.get("price")  # the levels come from the index; --entry is the futures fill
+            if a.entry is not None:
+                info["future"] = dict(info["future"], price=a.entry, source="user", estimated=False)
         if not info["symbol"] or info["entry"] is None:
             raise PlanError("%s has no symbol or price" % path)
     if info["interval"] not in INTERVALS:
