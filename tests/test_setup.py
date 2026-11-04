@@ -113,8 +113,9 @@ class SetupScript(unittest.TestCase):
 
     def test_moves_old_desktop_keys_over_takes_kite_out_and_keeps_the_rest(self):
         os.makedirs(os.path.dirname(self.cfg))
+        # the old manual setup had no EXCLUDED_TOOLS: that is not a choice to go live
         old_kite = {"command": "/old/kite-mcp-server", "env": {
-            "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}  # went live
+            "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}
         with open(self.cfg, "w") as fh:
             json.dump({"mcpServers": {"kite": old_kite, "other": {"command": "x"}}, "theme": "dark"}, fh)
         os.makedirs(os.path.join(self.target, ".claude"))
@@ -125,7 +126,9 @@ class SetupScript(unittest.TestCase):
         lines = self.key_file()
         self.assertIn("KITE_API_KEY=typed-key", lines)
         self.assertIn("KITE_API_SECRET=typed-secret", lines)
-        self.assertFalse([x for x in lines if x.startswith("EXCLUDED_TOOLS")])  # order tools stay on, as you had them
+        # moved keys come over with the order tools off, and the script says how to go live again
+        self.assertTrue([x for x in lines if x.startswith("EXCLUDED_TOOLS=place_order")], lines)
+        self.assertIn("delete the EXCLUDED_TOOLS line", r.stdout)
         with open(self.cfg) as fh:
             doc = json.load(fh)
         self.assertNotIn("kite", doc["mcpServers"])

@@ -131,21 +131,23 @@ if E["OS"] == "mac" and os.path.exists(E["SERVICE"]):
 have = read_env(E["KITE_ENV"]) if os.path.exists(E["KITE_ENV"]) else None
 moved = next((e for e in old if real(e)), None)
 if have is None or (not real(have) and moved):
-    keys = moved or {"KITE_API_KEY": "PASTE_KEY_LATER", "KITE_API_SECRET": "PASTE_SECRET_LATER",
-                     "EXCLUDED_TOOLS": ORDER_TOOLS}
+    keys = moved or {"KITE_API_KEY": "PASTE_KEY_LATER", "KITE_API_SECRET": "PASTE_SECRET_LATER"}
     lines = ["# Your Kite Connect key and secret, for the shared Kite MCP server. Only you can read this file.",
              "# Never put them in a repo or a chat. After any change, restart the server:",
              "#   " + E["RESTART"],
              "# Delete the EXCLUDED_TOOLS line only when you go live (see /bharat-broker).",
-             "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"]]
-    if keys.get("EXCLUDED_TOOLS"):  # an old setup that already went live keeps its order tools on
-        lines.append("EXCLUDED_TOOLS=" + keys["EXCLUDED_TOOLS"])
+             "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"],
+             # always, moved keys too: an old config without the line never chose to go live
+             "EXCLUDED_TOOLS=" + (keys.get("EXCLUDED_TOOLS") or ORDER_TOOLS)]
     os.makedirs(os.path.dirname(E["KITE_ENV"]), mode=0o700, exist_ok=True)
     fd = os.open(E["KITE_ENV"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     os.chmod(E["KITE_ENV"], 0o600)
     print("   key file: " + E["KITE_ENV"] + (" (your keys, moved from the old setup)" if moved else " (placeholder keys)"))
+    if moved:
+        print("   the order tools are OFF. If you were trading live, delete the EXCLUDED_TOOLS line in that file,")
+        print("   then restart the server: " + E["RESTART"])
 else:
     print("   key file kept: " + E["KITE_ENV"])
 
