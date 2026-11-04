@@ -260,6 +260,62 @@ class Cli(unittest.TestCase):
         self.assertIn("No plan", text)
 
 
+P2 = os.path.join(FIX, "p2")
+
+
+class Futures(unittest.TestCase):
+    setUp = Cli.setUp
+    tearDown = Cli.tearDown
+    read_plan = Cli.read_plan
+
+    def entry_fut(self, *extra):
+        code, text, err = run(entry, ["check", "NIFTY", "--instrument", "fut", "--now", "2026-10-21 09:35",
+                                      "--offline", os.path.join(P2, "yahoo-NSEI-5m.json"),
+                                      "--bhavcopy", os.path.join(P2, "fo-bhavcopy-20261019.csv.zip"), "--write"]
+                              + list(extra))
+        self.assertEqual(code, 0, err)
+
+    def test_the_example_in_futures_points(self):
+        self.entry_fut()
+        code, text, err = run(exitp, ["plan", "--now", "2026-10-21 09:36", "--stop", "or-mid", "--target", "1R",
+                                      "--write"])
+        self.assertEqual(code, 0, err)
+        p = self.read_plan()
+        self.assertEqual(p["instrument"], "fut")
+        self.assertEqual((p["entry"], p["stop"], p["target"]), (EX.FUT_PRICE, EX.FUT_STOP, EX.FUT_TARGET))
+        self.assertEqual((p["contract"], p["lot"], p["expiry"]), (EX.FUT_CONTRACT, EX.FUT_LOT, EX.FUT_EXPIRY))
+        self.assertEqual(p["index"], {"entry": EX.FUT_TRIGGER_CLOSE, "stop": EX.FUT_INDEX_STOP,
+                                      "target": 23197.25})
+        self.assertEqual(p["risk_per_unit"], EX.FUT_RISK_PER_UNIT)
+        self.assertEqual(p["risk_per_unit"], p["risk_per_share"])
+        self.assertAlmostEqual(p["risk_per_unit"] * p["lot"], EX.FUT_RISK_PER_LOT, places=2)
+        self.assertEqual(p["risk_per_lot"], EX.FUT_RISK_PER_LOT)
+        self.assertEqual((p["basis_date"], p["basis_estimated"], p["fut_price_source"]),
+                         (EX.FUT_BASIS_DATE, False, "bhavcopy"))
+        self.assertIn(EX.FUT_CONTRACT, text)
+        self.assertIn("Risk a lot", text)
+
+    def test_a_given_futures_price_keeps_the_points(self):
+        self.entry_fut("--fut-price", "23050.00")
+        code, _, err = run(exitp, ["plan", "--now", "2026-10-21 09:36", "--stop", "or-mid", "--target", "1R",
+                                   "--write"])
+        self.assertEqual(code, 0, err)
+        p = self.read_plan()
+        self.assertEqual((p["entry"], p["stop"], p["target"]), (23050.00, 22968.35, 23131.65))
+        self.assertEqual(p["fut_price_source"], "user")
+
+    def test_a_level_plan_still_needs_a_named_stop(self):
+        self.entry_fut()
+        with open(os.path.join("trader", "entry.json")) as fh:
+            e = json.load(fh)
+        e["setup"] = "level"
+        with open(os.path.join("trader", "entry.json"), "w") as fh:
+            json.dump(e, fh)
+        code, _, err = run(exitp, ["plan", "--now", "2026-10-21 09:36"])
+        self.assertEqual(code, 1)
+        self.assertIn("give --stop", err)
+
+
 class SkillDoc(unittest.TestCase):
     def test_skill_md(self):
         with open(os.path.join(ROOT, "bharat-exit", "SKILL.md"), encoding="utf-8") as fh:
