@@ -4,6 +4,7 @@ Fetches every source the spec names once and saves the raw response to
 tests/fixtures/p0/<name>. Prints one line per source: OK <bytes> or FAIL <reason>.
 
     python3 tools/probe.py [--only name,name] [--day YYYYMMDD]
+    python3 tools/probe.py --p2 [--days 20261016,20261019]   # P2 sources -> tests/fixtures/p2/
 """
 
 import argparse
@@ -90,16 +91,32 @@ def sources(day):
     ]
 
 
+def p2_sources(days):
+    arch = "https://nsearchives.nseindia.com/content/fo/"
+    yq = "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=60d&interval=5m"
+    out = [("yahoo-NSEBANK-5m.json", yq % "%5ENSEBANK", None, "*/*"),
+           ("yahoo-NSEI-5m.json", yq % "%5ENSEI", None, "*/*"),
+           ("fo_mktlots.csv", arch + "fo_mktlots.csv", None, "*/*")]
+    for ymd in days:
+        out.append(("fo-bhavcopy-%s.csv.zip" % ymd, arch + "BhavCopy_NSE_FO_0_0_0_%s_F_0000.csv.zip" % ymd, None, "*/*"))
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--day", default="")
+    ap.add_argument("--p2", action="store_true")
+    ap.add_argument("--days", default="20261016,20261019")
     a = ap.parse_args(argv)
+    global OUT
     day = date(int(a.day[:4]), int(a.day[4:6]), int(a.day[6:])) if a.day else last_weekday(date.today() - timedelta(days=1))
+    if a.p2:
+        OUT = os.path.join(ROOT, "tests", "fixtures", "p2")
     os.makedirs(OUT, exist_ok=True)
     only = set(x for x in a.only.split(",") if x)
     bad = 0
-    for name, url, ref, acc in sources(day):
+    for name, url, ref, acc in (p2_sources(a.days.split(",")) if a.p2 else sources(day)):
         if only and not any(o in name for o in only):
             continue
         try:
