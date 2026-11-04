@@ -74,7 +74,7 @@ batch that is fine order by order but breaks a limit together is caught.
 | size | (entries) under `min_order_inr` or over `max_order_inr` |
 | position | (entries) the stock would be over `max_position_pct` of the account |
 | cash | (entries) the buy would leave less than the cash buffer, or need more than `mis_leverage` x your cash |
-| stop | (entries) no stop while `require_stop` is true; a stop on the wrong side of the entry |
+| stop | (entries) no stop while `require_stop` is true; a stop on the wrong side of the entry; live (`"paper": false`), a stop that is only in the plan and not at the broker |
 | loss | (entries) qty x (entry minus stop) + round-trip costs at the stop over `max_loss_per_trade_inr` |
 | reward:risk | (entries) (target minus entry) / (entry minus stop) under `min_reward_risk` |
 | costs | (entries) round-trip costs at the target over `max_cost_share` (0.25) of the reward at the target |
@@ -101,11 +101,14 @@ How the numbers work:
   lose, as bharat-broker logged it.
 - **The window** is IST, from `india.py`'s NSE calendar, never the computer's
   clock zone. Weekends, NSE holidays and years with no holiday list are
-  closed. On the Muhurat session (14:20 to 15:30 in 2026) the default window
+  closed, even with the entry window switched off. On the Muhurat session (14:20 to 15:30 in 2026) the default window
   leaves 14:20 to 14:45. Set both `no_entries_*` to null to switch it off.
 - **The band** comes from `trader/entry.json`: bharat-entry's previous close
   and the band the scanner wrote on the watchlist hit (or `--band`). F&O
-  stocks have no fixed band, so the check stays quiet for them.
+  stocks have no fixed band. When no band is known the check is off and a
+  warning says so; an `entry.json` from another day is not used.
+- **The clock.** `--now` and `--today` are for tests and paper only; a live
+  check refuses them.
 - **F&O ban.** A stock in NSE's F&O ban period can still be traded in cash,
   so the ban does not block a P1 order. It matters for F&O (P2).
 

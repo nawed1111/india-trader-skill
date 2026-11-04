@@ -103,3 +103,13 @@ class SkillDoc(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_only_nse_https_links_are_opened(self):
+        f = res.Fetcher()
+        for bad in ("file:///etc/passwd", "http://nsearchives.nseindia.com/x.xml", "https://evil.example/x.xml",
+                    "https://evilnseindia.com/x.xml"):
+            with self.assertRaises(res.ResultsError) as cm:
+                f.xbrl("RELIANCE", bad)
+            self.assertIn("not an NSE https link", str(cm.exception))

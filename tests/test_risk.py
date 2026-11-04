@@ -267,3 +267,46 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_window_off_still_blocks_a_closed_market(self):
+        c = cfg(no_entries_before=None, no_entries_after=None)
+        for now in ("2026-10-20 10:00", "2028-03-01 10:00", "2026-10-19 08:00"):
+            r = one([rel()], c, now=now)["results"][0]
+            self.assertTrue(any(x.startswith("window: NSE is closed") for x in r["reasons"]), now)
+        self.assertEqual(one([rel()], c, now="2026-10-19 15:00")["results"][0]["verdict"], "PASS")
+
+    def test_live_entries_need_the_stop_at_the_broker(self):
+        o = rel()
+        for k in ("stop_loss_stop_price", "take_profit_limit_price", "order_class"):
+            del o[k]
+        self.assertEqual(one([o])["results"][0]["verdict"], "PASS")          # paper: the plan stop is enough
+        r = one([o], cfg(paper=False))["results"][0]
+        self.assertTrue(any(x.startswith("stop: a live entry needs its stop at the broker") for x in r["reasons"]))
+        self.assertEqual(one([rel()], cfg(paper=False))["results"][0]["verdict"], "PASS")
+
+    def test_an_unknown_band_is_said(self):
+        r = one([rel()])["results"][0]
+        self.assertTrue(any(w.startswith("band: no price band known for RELIANCE, so the band check is off")
+                            for w in r["warnings"]), r["warnings"])
+
+    def test_an_old_entry_json_is_ignored(self):
+        d = tempfile.mkdtemp()
+        e = os.path.join(d, "entry.json")
+        with open(e, "w") as fh:
+            json.dump({"symbol": "RELIANCE", "date": "2026-10-16", "prev_close": 1211.2, "band": 1.3}, fh)
+        code, text, _ = run(["--orders", ORDERS_PATH, "--config", CFG_PATH, "--now", NOW, "--portfolio",
+                             "/nonexistent", "--prices", "/nonexistent", "--state", "/nonexistent",
+                             "--entry", e, "--no-write"])
+        self.assertEqual(code, 0)
+        self.assertIn("is from 2026-10-16, not today: its band is not used", text)
+
+    def test_live_refuses_a_pinned_clock(self):
+        d = tempfile.mkdtemp()
+        live = os.path.join(d, "live.json")
+        with open(live, "w") as fh:
+            json.dump(cfg(paper=False), fh)
+        code, _, err = run(["--orders", ORDERS_PATH, "--config", live, "--now", NOW, "--no-write"])
+        self.assertEqual(code, 1)
+        self.assertIn("--now and --today are for tests and paper only", err)

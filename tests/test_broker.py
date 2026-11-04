@@ -214,8 +214,18 @@ class Flow(unittest.TestCase):
         self.assertIn("nothing to flatten", err)
 
     def test_live_needs_the_static_ip(self):
+        # live refuses --now, so the real clock is pinned here instead
         self.set_cfg(paper=False)
-        self.run_risk()
+        old_t, old_c = ticket.parse_now, check.parse_now
+        ticket.parse_now = lambda text: old_t(text or NOW)
+        check.parse_now = lambda text: old_c(text or NOW)
+        self.addCleanup(setattr, ticket, "parse_now", old_t)
+        self.addCleanup(setattr, check, "parse_now", old_c)
+        self.args = lambda *extra, **kw: list(extra) + ["--orders", self.orders, "--config", self.cfg,
+                                                        "--risk", self.risk, "--state", self.state]
+        with redirect_stdout(io.StringIO()):
+            check.main(["--orders", self.orders, "--config", self.cfg, "--portfolio", self.pf,
+                        "--prices", self.none, "--state", self.state, "--entry", self.none, "--out", self.risk])
         code, text, _ = run(self.args("show", "--index", "1"))
         self.assertEqual(code, 1)
         self.assertIn("ORDER 1 of 1, LIVE ZERODHA ACCOUNT, REAL MONEY", text)
@@ -287,3 +297,70 @@ class Flow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixes(unittest.TestCase):
+    def setUp(self):
+        Flow.setUp(self)
+
+    def tearDown(self):
+        Flow.tearDown(self)
+
+    args = Flow.args
+    run_risk = Flow.run_risk
+    state_doc = Flow.state_doc
+    set_cfg = Flow.set_cfg
+
+    def test_the_log_keeps_the_loss_risk_checked(self):
+        prices = os.path.join(self.d, "prices.json")
+        with open(prices, "w") as fh:
+            json.dump({"as_of": "2026-10-19T04:20:30Z", "prices": {"RELIANCE": 1229.0}}, fh)
+        self.set_cfg(min_reward_risk=0.5, max_loss_per_trade_inr=1500)
+        with redirect_stdout(io.StringIO()):
+            check.main(["--orders", self.orders, "--config", self.cfg, "--portfolio", self.pf, "--prices", prices,
+                        "--state", self.state, "--entry", self.none, "--now", NOW, "--out", self.risk])
+        with open(self.risk) as fh:
+            checked = json.load(fh)["results"][0]["max_loss"]
+        self.assertGreater(checked, 987.73)                     # measured from the fresher, higher price
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+        self.assertEqual(self.state_doc()["orders"][0]["max_loss"], checked)
+
+    def test_a_stale_pass_is_not_a_yes(self):
+        self.run_risk()
+        code, _, err = run(self.args("approve", "--index", "1", "--reply", "yes", now="2026-10-19 10:20"))
+        self.assertEqual(code, 1)
+        self.assertIn("the risk check is 29 minutes old", err)
+        self.run_risk(now="2026-10-19 14:44")
+        code, _, err = run(self.args("approve", "--index", "1", "--reply", "yes", now="2026-10-19 14:50"))
+        self.assertEqual(code, 1)
+        self.assertIn("no new entries after 14:45 IST", err)
+
+    def test_live_refuses_a_pinned_clock(self):
+        self.set_cfg(paper=False, static_ip_registered=True)
+        code, _, err = run(self.args("show"))
+        self.assertEqual(code, 1)
+        self.assertIn("--now and --today are for tests and paper only", err)
+
+    def test_a_yes_naming_another_symbol(self):
+        o = rel()
+        for r in ("yes HDFCBANK", "yes M&M", "yes BAJAJ-AUTO"):
+            self.assertFalse(ticket.parse_yes(r, o, ["RELIANCE", "HDFCBANK", "M&M", "BAJAJ-AUTO"])[0], r)
+        self.assertTrue(ticket.parse_yes("yes RELIANCE", o, ["RELIANCE", "HDFCBANK"])[0])
+
+    def test_the_sl_m_step_says_what_to_do(self):
+        self.set_cfg(paper=False, static_ip_registered=True)
+        old = ticket.parse_now
+        ticket.parse_now = lambda text: old(text or NOW)
+        old_c = check.parse_now
+        check.parse_now = lambda text: old_c(text or NOW)
+        try:
+            with redirect_stdout(io.StringIO()):
+                check.main(["--orders", self.orders, "--config", self.cfg, "--portfolio", self.pf, "--prices",
+                            self.none, "--state", self.state, "--entry", self.none, "--out", self.risk])
+            code, text, err = run(["approve", "--index", "1", "--reply", "yes", "--orders", self.orders, "--config",
+                                   self.cfg, "--risk", self.risk, "--state", self.state])
+        finally:
+            ticket.parse_now, check.parse_now = old, old_c
+        self.assertEqual(code, 0, err)
+        self.assertIn("quantity = the FILLED quantity", text)
+        self.assertIn("If the stop is rejected or denied, the position has no stop: flatten it now", text)

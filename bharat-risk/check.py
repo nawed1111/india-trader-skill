@@ -150,8 +150,6 @@ def window_check(now_ist, c):
     """Reasons an entry cannot be placed now (IST). Empty when the window is off."""
     before = hhmm(c.get("no_entries_before"), "no_entries_before")
     after = hhmm(c.get("no_entries_after"), "no_entries_after")
-    if before is None and after is None:
-        return [], []
     d, t = now_ist.date(), now_ist.time().replace(second=0, microsecond=0)
     ok, why = india.trading_day(d)
     stamp = now_ist.strftime("%a %Y-%m-%d %H:%M")
@@ -481,6 +479,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if leg_stop and plan_stop and abs(leg_stop - plan_stop) > CENT:
                 warns.append("the bracket stop %s differs from the plan's stop %s: the bracket's is the one "
                              "the broker uses" % (_p(leg_stop), _p(plan_stop)))
+            if not c.get("paper", True) and not leg_stop:
+                later.append("stop: a live entry needs its stop at the broker (a bracket stop_loss_stop_price); "
+                             "a stop in the plan only does not protect the position")
             if stop and not leg_stop:
                 warns.append("the stop %s is in the plan only, not at the broker: set a stop alert "
                              "(bharat-alerts: alerts.py add --from-plan)" % _p(stop))
@@ -542,6 +543,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
             later.extend(win_reasons)
             b = bands.get(sym) or {}
+            if long and not (_f(b.get("band")) and _f(b.get("prev_close"))):
+                warns.append("band: no price band known for %s, so the band check is off (bharat-entry --band, or "
+                             "the band the scanner wrote)" % sym)
             if long and ref and _f(b.get("band")) and _f(b.get("prev_close")):
                 upper = india.tick_round(_f(b["prev_close"]) * (1 + _f(b["band"]) / 100.0), mode="down")
                 if ref >= upper - CENT:
@@ -706,6 +710,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         now = parse_now(a.now)
+        cfg_peek = read_json(a.config, "config", required=False) or {}
+        if not cfg_peek.get("paper", True) and (a.now or a.today):
+            raise RiskError("--now and --today are for tests and paper only: a live check uses the real clock")
         if a.today and not re.match(r"^\d{4}-\d{2}-\d{2}$", a.today):
             raise RiskError("--today wants a date like 2026-10-19")
         doc = read_json(a.orders, "orders file (run bharat-budget first)")
@@ -718,10 +725,15 @@ def main(argv=None):
         prices, times = load_prices(pdoc)
         state = read_json(a.state, "broker state", required=False)
         ent = read_json(a.entry, "entry", required=False) or {}
-        bands = {}
-        if ent.get("symbol") and ent.get("prev_close") and ent.get("band"):
+        today = a.today or to_local(now).date().isoformat()
+        bands, old_entry = {}, None
+        if ent.get("date") and str(ent["date"]) != today:
+            old_entry = "%s is from %s, not today: its band is not used" % (a.entry, ent["date"])
+        elif ent.get("symbol") and ent.get("prev_close") and ent.get("band"):
             bands[str(ent["symbol"]).upper()] = {"band": ent["band"], "prev_close": ent["prev_close"]}
         res = check(orders, cfg, portfolio, prices, state, a.today, now, times, bands)
+        if old_entry:
+            res["warnings"].append(old_entry)
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:

@@ -147,7 +147,7 @@ class Fetcher(object):
             try:
                 return india.nse_get(url)
             except india.NSEError as exc:
-                raise NewsError(exc.reason)
+                raise NewsError(str(exc))       # names the URL
         headers = {"User-Agent": BROWSER_UA, "Accept-Encoding": "gzip"}
         req = urllib.request.Request(url, headers=headers)
         try:

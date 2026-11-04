@@ -294,7 +294,7 @@ def parse_yes(reply, order, batch_symbols=()):
     if DOUBT_WORDS & set(words[1:]):
         return False, "the reply has a condition or a doubt in it; ask again"
     sym = str(order.get("symbol", "")).upper()
-    tokens = set(re.findall(r"[A-Z][A-Z.\-]{0,6}", raw.upper()))
+    tokens = set(re.findall(r"[A-Z0-9][A-Z0-9&\-]{0,19}", raw.upper()))
     others = {s.upper() for s in batch_symbols} - {sym}
     named = tokens & others
     if named:
@@ -502,12 +502,48 @@ def _clock(a):
     return now, today
 
 
+def no_pinned_clock_live(a, cfg):
+    if not cfg.get("paper", True) and (getattr(a, "now", None) or getattr(a, "today", None)):
+        raise TicketError("--now and --today are for tests and paper only: a live ticket uses the real clock")
+
+
+STALE_MINUTES = 15
+
+
+def entry_now_problem(cfg, risk, now):
+    """Why an entry cannot be approved right now, or None: the PASS must be fresh
+    (under 15 minutes old) and now must be inside NSE's session and the entry window."""
+    local = to_local(now)
+    try:
+        checked = datetime.datetime.strptime(str((risk or {}).get("now_ist")), "%Y-%m-%d %H:%M")
+    except ValueError:
+        checked = None
+    if checked is not None:
+        age = (local - checked).total_seconds() / 60.0
+        if age > STALE_MINUTES:
+            return "the risk check is %d minutes old; prices and the window move: run check.py again" % age
+    s = india.session(local.date())
+    if not s or not (s[0].replace(tzinfo=None) <= local < s[1].replace(tzinfo=None)):
+        return "NSE is not open now (%s IST)" % local.strftime("%Y-%m-%d %H:%M")
+    for key, default, word in (("no_entries_before", "09:30", "before"), ("no_entries_after", "14:45", "after")):
+        v = cfg.get(key, default)
+        if not v:
+            continue
+        h, m = [int(x) for x in str(v).split(":")]
+        t = datetime.time(h, m)
+        hm_now = local.time().replace(second=0, microsecond=0)
+        if (word == "before" and hm_now < t) or (word == "after" and hm_now > t):
+            return "no new entries %s %s IST (it is %s)" % (word, v, local.strftime("%H:%M"))
+    return None
+
+
 def _load(a):
     doc = read_json(a.orders, "orders file (run bharat-budget, or ticket.py flatten, first)")
     orders = doc.get("orders", doc) if isinstance(doc, dict) else doc
     if not isinstance(orders, list) or not orders:
         raise TicketError("no orders in %s" % a.orders)
     cfg = read_json(a.config, "config", required=False) or {}
+    no_pinned_clock_live(a, cfg)
     risk = read_json(a.risk, "risk check", required=False)
     state = load_state(a.state)
     now, today = _clock(a)
@@ -549,11 +585,17 @@ def cmd_approve(a):
     problem = live_problem(cfg)
     if problem:
         raise TicketError("order %d cannot go live: %s" % (a.index, problem))
+    if kind_of(order, rv) == "entry":
+        late = entry_now_problem(cfg, risk, now)
+        if late:
+            raise TicketError("order %d is not ready: %s" % (a.index, late))
     ok, why = parse_yes(a.reply, order, [o.get("symbol", "") for o in orders])
     if not ok:
         print("Not recorded: %s. Ask the user again with the ticket for order %d." % (why, a.index))
         return 1
     loss, stop = max_loss(order)
+    if rv and rv.get("max_loss") is not None:
+        loss = rv["max_loss"]          # what bharat-risk checked, so the daily limit counts the same number
     rec = {"at": ist_iso(now), "date": today, "index": a.index, "fingerprint": fingerprint(order),
            "symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
            "qty": order.get("qty"), "kind": kind_of(order, rv), "max_loss": loss, "stop": stop,
@@ -573,6 +615,10 @@ def cmd_approve(a):
         if len(calls) > 1:
             print("After it fills, the stop (one more place_order, same yes):")
             print(json.dumps(calls[1]["input"], indent=2))
+            print("Its quantity = the FILLED quantity (check get_orders): a part-filled entry gets a smaller stop,")
+            print("or the stop would sell more than you hold and leave you short.")
+            print("If the stop is rejected or denied, the position has no stop: flatten it now (ticket.py flatten,")
+            print("bharat-risk, the user's yes) and tell the user.")
         print("Claude's card shows Allow once / Deny for each call. Then: ticket.py result --index %d --status "
               "placed|denied|failed --broker-id ID" % a.index)
     return 0
@@ -638,6 +684,7 @@ def cmd_fill(a):
 
 def cmd_flatten(a):
     cfg = read_json(a.config, "config", required=False) or {}
+    no_pinned_clock_live(a, cfg)
     sym = a.symbol.strip().upper()
     now, today = _clock(a)
     source = "the broker, get_positions"

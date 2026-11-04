@@ -121,3 +121,17 @@ class SkillDoc(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_a_failed_fetch_names_the_url(self):
+        def blocked(url, **kw):
+            raise ins.india.NSEError(url, "HTTP 403")
+        old = ins.india.nse_get
+        ins.india.nse_get = blocked
+        try:
+            with self.assertRaises(ins.InsiderError) as cm:
+                ins.Fetcher().get(ins.FLOWS_URL, "fiidii.json")
+        finally:
+            ins.india.nse_get = old
+        self.assertIn("fiidiiTradeReact", str(cm.exception))

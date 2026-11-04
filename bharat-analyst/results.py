@@ -159,12 +159,16 @@ class Fetcher(object):
         try:
             return india.nse_get(LIST_URL % urllib.parse.quote(sym))
         except india.NSEError as e:
-            raise ResultsError("NSE did not answer for %s: %s" % (sym, e.reason))
+            raise ResultsError("NSE did not answer for %s: %s" % (sym, e))
 
     def xbrl(self, sym, url):
         name = url.rsplit("/", 1)[-1]
         if self.offline:
             return self._file(os.path.join(self.offline, sym, name))
+        u = urllib.parse.urlparse(url)
+        host = u.hostname or ""
+        if u.scheme != "https" or not (host == "nseindia.com" or host.endswith(".nseindia.com")):
+            raise ResultsError("the filing link %r is not an NSE https link; not opened" % url)
         req = urllib.request.Request(url, headers={"User-Agent": india.TOOL_UA})
         try:
             with urllib.request.urlopen(req, timeout=30) as r:

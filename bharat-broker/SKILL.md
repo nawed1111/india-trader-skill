@@ -44,6 +44,9 @@ python3 "${CLAUDE_SKILL_DIR}/ticket.py" flatten --symbol RELIANCE --qty 73
 python3 "${CLAUDE_SKILL_DIR}/ticket.py" log
 ```
 
+`--now` and `--today` are for tests and paper only; with `"paper": false`
+every tool refuses them and uses the real clock.
+
 `ticket.py` never talks to a broker. It renders tickets, checks that a reply
 is a real yes for that order, keeps the paper ledger, builds the flatten
 ticket, and keeps the log in `trader/state/broker.json`. `--now "2026-10-19
@@ -118,7 +121,9 @@ The target is an alert (`/bharat-alerts`). Taking it is a new sell ticket
    READY or BLOCKED goes back to `/bharat-risk` (or, live, to the static-IP
    step).
 2. Show ONE ticket and ask: "Place this order? Reply yes or no." One order
-   per question. Never offer "yes to all".
+   per question. Never offer "yes to all". An entry's PASS is good for 15
+   minutes and only inside NSE's session and the entry window: `approve`
+   refuses a stale PASS or a late entry, so run `/bharat-risk` again.
 3. Run `ticket.py approve --index N --reply "<the user's reply, word for word>"`.
    If it prints "Not recorded", the reply was not an explicit yes for this
    order (for example "sure", "haan", "yes to all", or a yes that names a
@@ -126,7 +131,10 @@ The target is an alert (`/bharat-alerts`). Taking it is a new sell ticket
    into a yes yourself.
 4. Paper: record the fill (above). Live: only after "Recorded your yes",
    call `place_order` with exactly the JSON the ticket printed; after it
-   fills, the SL-M stop.
+   fills, the SL-M stop, with its quantity set to the FILLED quantity (a
+   part-filled entry gets a smaller stop, or the stop would sell more than
+   is held and leave the user short). If the stop is rejected or denied, the
+   position has no stop: flatten it now and tell the user.
 5. Record what happened: `ticket.py result --index N --status placed
    --broker-id <id> --filled-qty Q --filled-price P`, or `--status denied`,
    or `--status failed` with `--note`. A failed order is not retried without

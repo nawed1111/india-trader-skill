@@ -75,7 +75,7 @@ class Fetcher(object):
         try:
             return india.nse_get(url)
         except india.NSEError as e:
-            raise InsiderError(e.reason)
+            raise InsiderError(str(e))          # names the URL
 
 
 def _json(data, what):
