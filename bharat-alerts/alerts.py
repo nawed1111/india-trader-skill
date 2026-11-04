@@ -352,7 +352,8 @@ def evaluate(rules, quotes, status, state, now_utc):
         rid = r.get("id") or "%s-%s" % (r.get("symbol", "market"), r["type"])
         if not active(r, today):
             continue
-        typ = {"stop": "below", "target": "above"}.get(r["type"], r["type"])
+        down = r.get("side") == "down"   # a bought put: its stop is above the index, its target below
+        typ = {"stop": "above" if down else "below", "target": "below" if down else "above"}.get(r["type"], r["type"])
         if typ == "opening_bell":
             if status["open"] and not _rang_today(rung.get(rid), today):
                 rings.append({"id": rid, "symbol": "", "message": "Opening bell: NSE is open (%s IST)%s."
@@ -379,6 +380,15 @@ def evaluate(rules, quotes, status, state, now_utc):
             exp = datetime.date.fromisoformat(r["expiry"])
             day = datetime.date.fromisoformat(today)
             at = _hhmm(r.get("at") or "09:15")
+            if r.get("close_option"):
+                if day == exp and status.get("opens") and local.time() >= at and not _rang_today(rung.get(rid), today):
+                    sym = r["symbol"].upper()
+                    rings.append({"id": rid, "symbol": sym, "message": (
+                        "%s expires today at 15:30. If you still hold it, close it now (bharat-broker flatten --symbol "
+                        "%s --limit PRICE): an ITM option held to expiry pays STT on its intrinsic value, and the "
+                        "last half hour swings hard." % (sym, sym))})
+                    rung[rid] = stamp
+                continue
             when = "today" if day == exp else ("on the next trading day, %s" % exp.isoformat()
                                                if india.prev_trading_day(exp) == day else None)
             if when and status.get("opens") and local.time() >= at and not _rang_today(rung.get(rid), today):
@@ -431,6 +441,7 @@ def rules_from_plan(plan, cfg_flat_by=None):
         raise AlertError("the plan has no symbol (run bharat-exit first)")
     sym = str(plan["symbol"]).upper()
     fut = plan.get("instrument") == "fut"
+    opt = plan.get("instrument") == "opt"
     out = []
     for key, typ, word in (("stop", "stop", "plan stop"), ("target", "target", "plan target")):
         v = plan.get(key)
@@ -444,8 +455,17 @@ def rules_from_plan(plan, cfg_flat_by=None):
                 raise AlertError("the futures plan has no index %s (re-run bharat-exit)" % key)
             note += " (index level; %s %.2f)" % (plan.get("contract"), v)
             v = ix
-        out.append({"id": "%s-plan-%s" % (sym.lower(), key), "symbol": sym, "type": typ, "price": float(v),
-                    "note": note})
+        if opt:  # no free option quotes: watch the index level the model ties to the premium level
+            ix = plan.get("index_" + key)
+            if not isinstance(ix, (int, float)):
+                raise AlertError("the options plan has no index_%s (re-run bharat-exit)" % key)
+            note += " (index level from the model; %s premium %.2f at it when planned, less as time passes)" % (
+                plan.get("contract"), v)
+            v = ix
+        rule = {"id": "%s-plan-%s" % (sym.lower(), key), "symbol": sym, "type": typ, "price": float(v), "note": note}
+        if opt and plan.get("index_side") == "down":
+            rule["side"] = "down"
+        out.append(rule)
     flat = plan.get("flat_by") or cfg_flat_by or "15:15"
     if _hhmm(flat) is None:
         raise AlertError("the plan's flat_by %r is not a time like 15:15" % flat)
@@ -454,9 +474,12 @@ def rules_from_plan(plan, cfg_flat_by=None):
     if plan.get("date"):
         for r in out:
             r["date"] = str(plan["date"])
-    if fut and plan.get("contract") and plan.get("expiry"):
+    if (fut or opt) and plan.get("contract") and plan.get("expiry"):
         out.append({"id": "%s-expiry" % str(plan["contract"]).lower(), "symbol": str(plan["contract"]).upper(),
                     "type": "expiry", "expiry": str(plan["expiry"]), "at": "09:15"})
+    if opt and plan.get("contract") and plan.get("expiry"):
+        out.append({"id": "%s-expiry-close" % str(plan["contract"]).lower(), "symbol": str(plan["contract"]).upper(),
+                    "type": "expiry", "expiry": str(plan["expiry"]), "at": "15:00", "close_option": True})
     return out
 
 
