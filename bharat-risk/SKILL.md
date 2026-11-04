@@ -201,7 +201,12 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 - **liquidity** open interest under `min_option_oi`, or no trades in the
   last bhavcopy, blocks.
 - **expiry** an expired contract, a missing expiry, or a new entry on
-  expiry day at or after `expiry_day_cutoff` (default 13:00) blocks.
+  expiry day at or after `expiry_day_cutoff` (default 13:00) blocks. A
+  weekly name carries its date (`NIFTY26O2023100CE` expires 20 Oct), and
+  that date wins: an order whose `expiry` disagrees blocks. A monthly name
+  gives the month only, so the order's expiry must be in that month.
+- **freeze** an F&O order over NSE's per-order limit (NIFTY 1,800 units,
+  BANKNIFTY 900) blocks, exits too: send it as several tickets.
 - **costs** use Zerodha's option charges; the cost-share check catches a
   cheap option (Rs 40 of brokerage alone on a Rs 195 position).
 - **lots** more than `max_lots`; `max_premium_inr` caps the premium.
