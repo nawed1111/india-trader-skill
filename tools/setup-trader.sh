@@ -86,4 +86,7 @@ echo
 echo "Done. Next:"
 echo " 1. Put your Kite Connect key and secret in: $CFG"
 echo " 2. Quit Claude Desktop completely and reopen it (macOS: allow access to the removable volume if asked)"
-echo " 3. Use the skills: cd \"$W\" && claude, then /bharat-scanner"
+echo " 3. Claude Code (the claude command) keeps its own server list. Once the keys are in, copy kite across"
+echo "    (pick kite from the list; after any change of keys, run claude mcp remove kite, then copy it again):"
+echo "      claude mcp add-from-claude-desktop"
+echo " 4. Use the skills: cd \"$W\" && claude, then /bharat-scanner"

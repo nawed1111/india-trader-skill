@@ -81,14 +81,27 @@ your other servers, and backs up Claude's config first. Then:
    config file (macOS `~/Library/Application Support/Claude/claude_desktop_config.json`,
    Windows `%APPDATA%\Claude\claude_desktop_config.json`), never in this
    repo and never in a chat. Quit Claude Desktop and reopen it.
-2. **Read-only first.** Ask Claude for your Kite profile, margins and
+2. **Claude Code too.** The skills run in Claude Code (`cd` into your folder,
+   then `claude`), which keeps its own list of MCP servers and does not read
+   Claude Desktop's. Once the keys are in, copy the server across, picking
+   `kite` from the list (and again whenever you change the keys):
+
+   ```bash
+   claude mcp add-from-claude-desktop
+   ```
+
+   The keys land in Claude Code's own settings in your home folder, not in
+   the repo. If it says kite already exists, run `claude mcp remove kite`
+   first, then copy it again.
+3. **Read-only first.** Ask Claude for your Kite profile, margins and
    positions. With `EXCLUDED_TOOLS` in the config, Claude cannot place,
    change or cancel an order.
-3. **Live, when you decide.** Register your static IP in Kite (Profile, IP
+4. **Live, when you decide.** Register your static IP in Kite (Profile, IP
    whitelist), set `"static_ip_registered": true` and `"paper": false` in
-   `trader/config.json`, delete the `EXCLUDED_TOOLS` line, restart Claude,
-   and set `place_order`, `modify_order` and `cancel_order` to **Needs
-   approval**. Start with the smallest trade you can.
+   `trader/config.json`, delete the `EXCLUDED_TOOLS` line from Claude
+   Desktop's config, restart Claude Desktop, copy kite across to Claude Code
+   again (step 2), and set `place_order`, `modify_order` and `cancel_order`
+   to **Needs approval**. Start with the smallest trade you can.
 
 On Windows, or to do it by hand: build the server per its README and copy
 the `kite` block from `bharat-broker/claude_desktop_config.example.json` into
