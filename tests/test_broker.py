@@ -102,6 +102,21 @@ class DesktopConfig(unittest.TestCase):
         for words in ("self-hosted", "static IP", "Needs approval"):
             self.assertIn(words, doc["_note"])
 
+    def test_keys_go_in_claudes_own_config_never_in_the_example(self):
+        # the example is tracked by git: a key typed into it ships with the next commit
+        with open(os.path.join(ROOT, "bharat-broker", "claude_desktop_config.example.json")) as fh:
+            doc = json.load(fh)
+        for k in ("KITE_API_KEY", "KITE_API_SECRET"):
+            self.assertIn("NOT_HERE", doc["mcpServers"]["kite"]["env"][k],
+                          "a real key in the tracked example? put the placeholder back and regenerate the key")
+        for words in ("Do not fill in this file", "Library/Application Support/Claude/claude_desktop_config.json",
+                      "%APPDATA%\\Claude\\claude_desktop_config.json"):
+            self.assertIn(words, doc["_note"])
+        with open(os.path.join(ROOT, ".gitignore")) as fh:
+            ignored = fh.read().splitlines()
+        for name in ("claude_desktop_config.json", ".env", ".mcp.json"):
+            self.assertIn(name, ignored)
+
 
 import example_values as EX  # noqa: E402
 FUT = {"symbol": EX.FUT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "buy", "qty": "65", "type": "market",

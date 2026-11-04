@@ -92,7 +92,12 @@ Going live is the user's own decision. Claude never sets `"paper": false`.
    live orders need the user's own copy running on their computer (at the
    registered IP), set up per that project's README.
    `claude_desktop_config.example.json` here shows the shape. **Keys never go
-   in the chat.** The user types them into the config file. Never ask for
+   in the chat, and never in that example:** it is tracked by git, so a key
+   typed there ships with the next commit. The user copies the kite block
+   into Claude's own config file, outside any repo (macOS:
+   `~/Library/Application Support/Claude/claude_desktop_config.json`;
+   Windows: `%APPDATA%\Claude\claude_desktop_config.json`), and types the
+   key and secret there. Never ask for
    them, never read that file back into the conversation, and if the user
    pastes a key anyway, tell them to delete the message and regenerate it.
 4. **Tool permissions.** Customize > Connectors, open kite: `place_order`,

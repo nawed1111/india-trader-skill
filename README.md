@@ -309,7 +309,9 @@ since 1 April 2026), every order sent through a broker's API must come from
 a static IP you have registered with the broker. Zerodha's hosted MCP server
 has no order tools, so live trading needs your own copy of
 zerodha/kite-mcp-server, run from that IP, with your own Kite Connect key in
-its config and never in the chat. Zerodha has no bracket orders: the pack
+Claude's own config file, never in the chat and never in the example file in
+this repo (`bharat-broker/claude_desktop_config.example.json` is tracked by
+git, so a key typed there would be pushed with your next commit). Zerodha has no bracket orders: the pack
 sends the entry, then one SL-M stop, and keeps the target as an alert, so two
 exit orders can never both fill.
 
