@@ -224,14 +224,16 @@ The same session as the futures example: NIFTY, 2026-10-21.
    too fast for an end-of-day price), open interest under `min_option_oi`, a
    new entry on expiry day after `expiry_day_cutoff` (13:00), an expiry that
    disagrees with the date in a weekly contract's name, and costs over
-   `max_option_cost_share` (10 %) of the premium paid, whatever the target:
-   a Rs 3 option bought for 1 lot pays about Rs 47 on a Rs 195 position. An
-   F&O order over NSE's freeze limit (NIFTY 1,800 units, 27 lots; BANKNIFTY
-   900) blocks too: send it as several tickets.
+   `max_option_cost_share` (10 %) of the premium paid, whatever the target
+   and with a stop or without: a Rs 3 option bought for 1 lot pays about
+   Rs 47 on a Rs 195 position. An F&O order over NSE's freeze limit (NIFTY
+   1,800 units, 27 lots; BANKNIFTY 900) blocks too: send it as several
+   tickets. So does a contract name it cannot read (a bad month code, a
+   weekly dated 31 Nov), a closing order included.
 6. **`/bharat-broker`** sends a LIMIT buy, then an SL stop-limit (NSE takes no
    SL-M on options) 10 ticks under the trigger; a stop-limit may not fill in
    a fast move. Flattening an option is always a limit sell, rounded down
-   to the 0.05 tick.
+   to the 0.05 tick; a limit under 0.05 is refused.
 7. **`/bharat-alerts`** watches the index levels the model ties to the
    premium stop and target, and says so in every message, and rings at
    15:00 on expiry day: an ITM option held to expiry pays
