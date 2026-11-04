@@ -1,7 +1,7 @@
 # India Trader skill: design
 
 Date: 2026-11-04
-Status: draft for review
+Status: approved; revised after P0 (2026-11-04)
 
 ## Goal
 
@@ -48,7 +48,7 @@ india-trader-skill/
   bharat-timemachine/  SKILL.md, timemachine.py, india.py
   bharat-budget/       SKILL.md, size.py, config.example.json, india.py
   bharat-risk/         SKILL.md, check.py, india.py
-  bharat-broker/       SKILL.md, ticket.py, ledger.py, india.py
+  bharat-broker/       SKILL.md, ticket.py, india.py
   bharat-alerts/       SKILL.md, alerts.py, india.py
   bharat-analyst/      SKILL.md, results.py, india.py
   bharat-insider/      SKILL.md, insider.py, india.py
@@ -77,19 +77,20 @@ the others.
   Kite needs.
 - **Costs:** `costs(segment, side, qty, price)` returns brokerage, STT,
   exchange transaction charge, SEBI fee, GST and stamp duty. The segment
-  is `eq_intraday`, `fut` or `opt`. Starting rates (to be confirmed in
-  phase 0 against Zerodha's brokerage calculator and the current Union
-  Budget):
+  is `eq_intraday`, `fut` or `opt`. Rates as confirmed in P0 on
+  2026-11-04 against zerodha.com/charges (see `docs/p0-findings.md`):
   - Brokerage: the lower of ₹20 and 0.03% per executed order (intraday
-    stocks); ₹20 flat (futures and options).
-  - STT, on the sell side: 0.025% (intraday stocks), 0.02% (futures),
-    0.1% of premium (options).
-  - NSE transaction charge: 0.00297% (stocks), 0.00173% (futures),
-    0.03503% of premium (options).
+    stocks and futures); ₹20 flat (options).
+  - STT, on the sell side: 0.025% (intraday stocks), 0.05% (futures),
+    0.15% of premium (options).
+  - NSE transaction charge: 0.00307% (stocks), 0.00183% (futures),
+    0.03553% of premium (options).
   - SEBI fee: ₹10 per crore of turnover.
   - Stamp duty, on the buy side: 0.003% (stocks), 0.002% (futures),
     0.003% (options).
   - GST: 18% on brokerage, the exchange charge and the SEBI fee.
+  - Rounding: STT and stamp duty to the whole rupee (as Zerodha's
+    calculator does).
   All rates live in one table with the date they were checked. A user
   config file can override them.
 - **Contract data:** lot sizes and expiry dates come from NSE's published
@@ -102,16 +103,16 @@ the others.
 | Skill | Starts from | What changes |
 | --- | --- | --- |
 | bharat-scanner | trader-scanner | Universe from NSE `EQUITY_L.csv` (cash) and the F&O list. Opening range from 9:15. Setups unchanged (ORB, flags, oversold bounce). Filters: price band, F&O ban, minimum turnover in ₹. |
-| bharat-news | trader-news | Yahoo RSS for `.NS` tickers, plus NSE and BSE corporate announcements in place of SEC 8-Ks. Times in IST. Tags results, board meetings, dividends/splits, block deals. |
-| bharat-entry | trader-entry | NSE session times. Same trigger logic. Warns when the stock is near its price band. |
+| bharat-news | trader-news | Yahoo RSS for `.NS` tickers, plus NSE corporate announcements in place of SEC 8-Ks (BSE blocks scripts, so there is no BSE fallback). Times in IST. Tags results, board meetings, dividends/splits, block deals. |
+| bharat-entry | trader-entry | NSE session times. Same trigger logic, except opening-range volume skips the 9:15 bar (Yahoo reports 0 volume for it). Warns when the stock is near its price band. |
 | bharat-exit | trader-exit | Flat by 15:15. Stops and targets rounded to the ₹0.05 tick (the tick size is read per instrument). |
 | bharat-timemachine | trader-timemachine | IST bars and NSE days. P3: replays the underlying index and prices the option at each step (see Options). |
 | bharat-budget | trader-budget | Sizes in ₹. Loss per trade includes round-trip costs from `india.costs`. Futures and options are sized in whole lots. MIS leverage is optional and capped at the broker's limit. |
 | bharat-risk | trader-risk | Drops the PDT rule. Adds checks for price band, F&O ban, lot multiple, expiry day, the square-off window, and costs as a share of the expected reward (BLOCK above a configurable threshold, default 25%). |
-| bharat-broker | trader-broker | Default: `ledger.py`, a local paper ledger that fills at the next bar's open plus a configurable slippage, and applies costs. Live: Zerodha via its Kite MCP server or the Kite Connect API, with bracket-like orders sent as an entry plus a GTT/SL-M stop. Two yeses as today: one typed in chat, plus Claude's tool approval. |
+| bharat-broker | trader-broker | Default: the paper portfolio `ticket.py` already keeps, with costs applied to every fill. Live: Zerodha via a self-hosted Kite MCP server (the hosted one has no order tools) or the Kite Connect API, from the static IP the user has whitelisted in Kite (SEBI rule since 1 Apr 2026), with bracket-like orders sent as an entry plus a GTT/SL-M stop. Two yeses as today: one typed in chat, plus Claude's tool approval. |
 | bharat-alerts | trader-alerts | IST clock, NSE calendar, a 15:15 flatten alert, an expiry-day alert. |
-| bharat-analyst | trader-analyst | Quarterly results from NSE's XBRL financial-results filings: revenue, operating profit, PAT and EPS, quarter over quarter and year over year. |
-| bharat-insider | trader-pelosi | Three feeds: SEBI insider-trading (PIT) disclosures filed on NSE, NSE bulk and block deals, and NSE's daily FII/DII cash figures. Same index/new-since-last-run flow as the Pelosi skill. |
+| bharat-analyst | trader-analyst | Quarterly results from NSE's integrated-filing results and their XBRL (`in-capmkt:` tags): revenue, operating profit, PAT and EPS, quarter over quarter and year over year. |
+| bharat-insider | trader-pelosi | Three feeds: SEBI insider-trading (PIT) disclosures filed on NSE, NSE bulk and block deals (latest-day snapshot), and NSE's daily FII/DII cash figures (latest day). History builds up across runs. Same index/new-since-last-run flow as the Pelosi skill. |
 
 ## Data sources
 
@@ -122,8 +123,8 @@ the others.
 | F&O contracts, lot sizes | NSE F&O contract/lot-size files | Cached by date |
 | F&O end-of-day prices | NSE F&O bhavcopy | For history and the Time Machine |
 | F&O intraday prices | Kite Connect API | Optional. Needs the user's own key; without one, options are planned from end-of-day data only |
-| Announcements, insider, bulk/block, FII/DII | NSE (and BSE) JSON endpoints | NSE blocks scripted access: fetch the home page for cookies, send a browser-like User-Agent, back off, and cache. If an endpoint fails, report it and continue with partial results; never invent data |
-| Quarterly results | NSE XBRL results files | |
+| Announcements, insider, bulk/block, FII/DII | NSE JSON endpoints | Best-effort cookie warm-up (the home page itself can 403), browser-like User-Agent, back off, and cache. If an endpoint fails, report it and continue with partial results; never invent data |
+| Quarterly results | NSE `integrated-filing-results` + XBRL | The older results list stops at Dec 2024 |
 
 NSE endpoints change without notice, so every fetcher has an `--offline
 <fixtures dir>` mode, and the tests only use that mode.
