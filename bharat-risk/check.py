@@ -42,12 +42,15 @@ What blocks an entry (on top):
                 placed today (trader/state/broker.json)
   daily limit   max_orders_per_day orders placed today
   stop          no stop while "require_stop": true (a bracket stop_loss_stop_price
-                or the order's plan stop); a stop on the wrong side of the entry
+                or the order's plan stop); a stop on the wrong side of the entry;
+                a market or limit order whose fresh price is already past the
+                stop (it would fill past it, and the stop order be rejected)
   loss          qty x (entry - stop) + round-trip costs at the stop over
                 max_loss_per_trade_inr. The entry is the limit price for a
                 limit order, else the HIGHER of the plan's entry and a fresh
                 price (under 15 minutes old), the LOWER for a short sell, so a
-                stale plan cannot understate the risk
+                stale plan cannot understate the risk (the size checks value a
+                short at the higher price)
   reward:risk   (target - entry) / (entry - stop) under min_reward_risk
   costs         round-trip costs at the target over max_cost_share (0.25) of
                 the reward at the target: on a small trade the charges eat
@@ -438,6 +441,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         plan_entry = _f(plan.get("entry"))
         live = fresh(sym)
         ref, ref_from = None, None
+        size_ref = None   # what the order is worth: the higher price, a short's too (its loss uses the lower)
         if typ in ("limit", "stop_limit"):
             ref, ref_from = _f(o.get("limit_price")), "limit"
         elif typ == "stop":
@@ -448,6 +452,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 # the price further from the stop: higher for a buy, lower for a sell (a short's stop is above it)
                 ref, ref_from = (min if side == "sell" else max)(cands, key=lambda x: x[0])
                 ref = _cent(ref)
+                size_ref = _cent(max(p for p, _ in cands))
                 if live and ref_from == "price" and plan_entry and abs(live - plan_entry) > CENT:
                     info.append("%s last %s is %s the plan's entry %s: the risk is measured from %s"
                                 % (sym, _p(ref), "below" if side == "sell" else "above", _p(plan_entry), _p(ref)))
@@ -461,7 +466,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             value = _f(notional)
         elif q:
             if ref:
-                value = q * ref
+                value = q * (size_ref or ref)
 
         # entry or exit
         held = acct["shares"].get(sym, 0.0)
@@ -644,6 +649,12 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if stop and not leg_stop:
                 warns.append("the stop %s is in the plan only, not at the broker: set a stop alert "
                              "(bharat-alerts: alerts.py add --from-plan)" % _p(stop))
+            # a market order, or a limit the price is already through, fills at the fresh price, whatever the plan says
+            if stop and live and typ in ("market", "limit") and (
+                    (long and live <= stop + CENT) or (not long and live >= stop - CENT)):
+                later.append("stop: %s last %s is already %s the stop %s: a %s now fills past it, and the broker "
+                             "rejects a stop on the wrong side of the price" % (
+                                 sym, _p(live), "below" if long else "above", _p(stop), side))
             if not stop:
                 if c.get("require_stop", True):
                     later.append("stop: no stop. Every entry needs one (\"require_stop\": true): a bracket "

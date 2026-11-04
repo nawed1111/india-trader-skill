@@ -145,6 +145,26 @@ class DayTradeChecks(unittest.TestCase):
         r = one([short], cfg(allow_short=True), prices={"ABC": 102.0}, price_times=times)["results"][0]
         self.assertEqual((r["entry_ref"], r["entry_ref_from"], r["risk_per_share"]), (100.0, "plan", 5.0))
 
+    def test_a_fresh_price_already_past_the_stop_blocks_the_entry(self):
+        # the order fills at the price, on the wrong side of its stop: the stop order would be rejected
+        times = {"ABC": at(NOW) - datetime.timedelta(minutes=1)}
+        for o, c, price in (
+                (bracket("ABC", 50, 100.0, 105.0, 90.0, side="sell"), cfg(allow_short=True), 106.0),
+                (bracket("ABC", 50, 100.0, 95.0, 110.0), cfg(), 94.0),
+                (bracket("ABC", 50, 100.0, 95.0, 110.0, type="limit", limit_price="100.00"), cfg(), 94.0)):
+            r = one([o], c, prices={"ABC": price}, price_times=times)["results"][0]
+            self.assertEqual(r["verdict"], "BLOCK", (o["side"], o["type"], r))
+            self.assertTrue([x for x in r["reasons"] if x.startswith("stop:") and check._p(price) in x], r["reasons"])
+
+    def test_a_shorts_size_is_measured_at_the_higher_price(self):
+        # the loss is measured from the lower price, but the order is worth the higher one
+        times = {"ABC": at(NOW) - datetime.timedelta(minutes=1)}
+        short = bracket("ABC", 50, 100.0, 130.0, 90.0, side="sell")
+        c = cfg(allow_short=True, max_order_inr=5500, max_loss_per_trade_inr=100000, min_reward_risk=0)
+        r = one([short], c, prices={"ABC": 120.0}, price_times=times)["results"][0]
+        self.assertEqual(r["entry_ref"], 100.0)
+        self.assertIn("size: Rs 6,000 is over your Rs 5,500 max order", r["reasons"])
+
     def test_a_stale_price_is_not_used(self):
         times = {"RELIANCE": at(NOW) - datetime.timedelta(minutes=40)}
         r = one([rel()], prices={"RELIANCE": 1229.0}, price_times=times)["results"][0]
