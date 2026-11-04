@@ -737,6 +737,9 @@ def cmd_flatten(a):
     lim = None
     if a.limit is not None:   # NSE rejects an off-tick price; down, so the sell that gets you out fills
         lim = india.tick_round(_f(a.limit), mode="down")
+        if lim < 0.05 - 1e-9:
+            raise TicketError("--limit %s is under NSE's 0.05 tick and would round down to 0.00: the lowest limit "
+                              "is 0.05" % a.limit)
         order["limit_price"] = _p(lim)
     if seg != SEGMENT:
         order["instrument"] = seg
