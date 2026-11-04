@@ -75,8 +75,13 @@ fi
 
 echo "== 5. The Kite server: one shared copy in the background"
 if [ -f "$CFG" ] && grep -q '"kite"' "$CFG"; then
-  cp "$CFG" "$CFG.backup-$(date +%Y%m%d-%H%M%S)"
+  BACKUP="$CFG.backup-$(date +%Y%m%d-%H%M%S)"
+  (umask 077 && cp "$CFG" "$BACKUP")
+  echo "   backup: $BACKUP (it holds your old keys: only you can read it; delete it once this setup works)"
 fi
+for b in "$CFG".backup-*; do   # backups from earlier runs hold the keys too
+  if [ -f "$b" ]; then chmod 600 "$b"; fi
+done
 OS="$OS" CFG="$CFG" W="$W" KITE_ENV="$KITE_ENV" SERVICE="$SERVICE" LABEL="$LABEL" RESTART="$RESTART" \
 KITE_BIN="$W/kite-mcp-server/kite-mcp-server" python3 - <<'PY'
 import json, os, plistlib

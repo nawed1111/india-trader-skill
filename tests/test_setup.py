@@ -121,6 +121,10 @@ class SetupScript(unittest.TestCase):
             "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}
         with open(self.cfg, "w") as fh:
             json.dump({"mcpServers": {"kite": old_kite, "other": {"command": "x"}}, "theme": "dark"}, fh)
+        os.chmod(self.cfg, 0o644)
+        older = self.cfg + ".backup-20261101-090000"          # left by an earlier run, keys and all
+        shutil.copy(self.cfg, older)
+        os.chmod(older, 0o644)
         os.makedirs(os.path.join(self.target, ".claude"))
         with open(os.path.join(self.target, ".claude", "settings.json"), "w") as fh:
             json.dump({"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}, fh)
@@ -137,7 +141,12 @@ class SetupScript(unittest.TestCase):
         self.assertNotIn("kite", doc["mcpServers"])
         self.assertEqual(doc["mcpServers"]["other"], {"command": "x"})
         self.assertEqual(doc["theme"], "dark")
-        self.assertTrue([f for f in os.listdir(os.path.dirname(self.cfg)) if ".backup-" in f])
+        backups = [os.path.join(os.path.dirname(self.cfg), f) for f in os.listdir(os.path.dirname(self.cfg))
+                   if ".backup-" in f]
+        self.assertEqual(len(backups), 2)
+        for b in backups:                                       # they hold the old keys: only you can read them
+            self.assertEqual(stat.S_IMODE(os.stat(b).st_mode), 0o600, b)
+        self.assertIn("holds your old keys", r.stdout)
         with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
             settings = json.load(fh)
         self.assertEqual((settings["model"], settings["permissions"]["allow"]), ("opus", ["Bash(ls)"]))
