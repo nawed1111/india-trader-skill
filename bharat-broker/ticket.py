@@ -70,8 +70,9 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
              "cls": "at the close", "ioc": "immediate or cancel", "fok": "fill or kill"}
 YES_WORDS = ("yes", "y")
 SEGMENT = "eq_intraday"
-FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
-OPT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
+# digits too, as in bharat-risk/check.py: 360ONE26NOVFUT, NIFTYNXT5026NOVFUT, 360ONE26NOV1200CE
+FUT_NAME = re.compile(r"^[A-Z0-9&\-]+?\d{2}[A-Z]{3}FUT$")
+OPT_NAME = re.compile(r"^[A-Z0-9&\-]+?\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
 FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
               "fut_price_source", "right", "strike", "premium_source", "oi", "illiquid", "iv")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
 MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)

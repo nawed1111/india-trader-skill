@@ -171,6 +171,41 @@ class Futures(unittest.TestCase):
                         portfolio={"cash": 50000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65}]})
         self.assertEqual(r["results"][0]["verdict"], "PASS", r["results"][0])
 
+    def flatten(self, *extra):
+        return run(["flatten", "--orders", self.orders, "--portfolio", self.pf, "--plan", os.path.join(self.d, "no"),
+                    "--config", os.path.join(self.d, "no"), "--now", "2026-11-04 15:15"] + list(extra))
+
+    def risk_on_the_exit(self, sym, qty):
+        with open(self.orders) as fh:
+            o = json.load(fh)["orders"][0]
+        r = check.check([o], {"budget": 200000, "allow_fno": True}, now=check.parse_now("2026-11-04 15:15"),
+                        portfolio={"cash": 50000, "positions": [{"ticker": sym, "shares": qty}]})
+        return o, r["results"][0]
+
+    def test_flatten_a_futures_name_with_digits(self):
+        # bharat-risk reads NIFTYNXT50 and 360ONE futures (digits in the name): the flatten ticket must go to NFO
+        for sym, qty in (("NIFTYNXT5026NOVFUT", "25"), ("360ONE26NOVFUT", "500")):
+            code, _, err = self.flatten("--symbol", sym, "--qty", qty)
+            self.assertEqual(code, 0, err)
+            o, res = self.risk_on_the_exit(sym, float(qty))
+            self.assertEqual((o["exchange"], o.get("instrument")), ("NFO", "fut"), sym)
+            self.assertEqual((res["verdict"], res["kind"]), ("PASS", "exit"), res)
+
+    def test_paper_fill_of_a_futures_name_with_digits_pays_only_the_charges(self):
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, "360ONE26NOVFUT", "buy", 500, 1200.0, "2026-11-04")
+        self.assertEqual(pf["cash"], round(200000 - india.leg_costs("fut", "buy", 500, 1200.0)["total"], 2))
+
+    def test_flatten_an_option_name_with_digits_goes_to_nfo_at_a_limit(self):
+        code, _, err = self.flatten("--symbol", "360ONE26NOV1200CE", "--qty", "500")
+        self.assertEqual(code, 1)
+        self.assertIn("--limit PRICE", err)
+        code, _, err = self.flatten("--symbol", "360ONE26NOV1200CE", "--qty", "500", "--limit", "12.30")
+        self.assertEqual(code, 0, err)
+        o, res = self.risk_on_the_exit("360ONE26NOV1200CE", 500.0)
+        self.assertEqual((o["exchange"], o.get("instrument"), o["type"], o["limit_price"]),
+                         ("NFO", "opt", "limit", "12.30"))
+        self.assertEqual((res["verdict"], res["kind"]), ("PASS", "exit"), res)
+
 
 class Flow(unittest.TestCase):
     def setUp(self):
