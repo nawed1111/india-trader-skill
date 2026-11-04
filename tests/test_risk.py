@@ -250,6 +250,22 @@ FUT_NOW = "2026-10-21 09:36"
 
 
 class Futures(unittest.TestCase):
+    def test_an_unreadable_name_with_instrument_fut_blocks(self):
+        for sym in ("NIFTY26NOV", "NIFTYFUT", "NIFTY26NOVFU", "NIFTY26NOV23100XE"):
+            r = one([fut_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertEqual(r["verdict"], "BLOCK", sym)
+            self.assertTrue([x for x in r["reasons"] if x.startswith("asset:") and sym in x], (sym, r["reasons"]))
+
+    def test_a_real_future_with_digits_in_its_underlying_is_readable(self):
+        for sym in ("NIFTYNXT5026NOVFUT", "360ONE26NOVFUT"):
+            r = one([fut_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertFalse([x for x in r["reasons"] if x.startswith("asset:")], (sym, r["reasons"]))
+            pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+            sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65", "type": "limit",
+                    "limit_price": "150.00", "time_in_force": "day", "instrument": "fut", "lot": 65}
+            r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+            self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), (sym, r))
+
     def test_a_futures_name_with_a_bad_month_blocks(self):
         r = one([fut_order(symbol="NIFTY26XYZFUT")], fut_cfg(), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")

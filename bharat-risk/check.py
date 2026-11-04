@@ -87,7 +87,7 @@ DEFAULTS = {
     "expiry_day_cutoff": "13:00", "max_option_cost_share": 0.10,
 }
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
-FUT_NAME = re.compile(r"^([A-Z&\-]+)(\d{2})([A-Z]{3})FUT$")
+FUT_NAME = re.compile(r"^([A-Z0-9&\-]+?)(\d{2})([A-Z]{3})FUT$")   # digits too: 360ONE26NOVFUT, NIFTYNXT5026NOVFUT
 ORDER_FIELDS = ("symbol", "exchange", "product", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                  "order_class", "take_profit_limit_price", "stop_loss_stop_price",
@@ -357,7 +357,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         known = name is not None or bool(fut_name and fut_name.group(3) in india.MONTHS)
         # F&O-shaped but unreadable (a bad month code, a weekly dated 31 Nov), or on NFO with nothing to classify it.
         # Not "instrument: opt" alone: real contracts like 360ONE26NOV1200CE have digits the parser cannot split.
-        unknown_nfo = not known and (bool(FNO.match(sym)) or (fno and not o.get("instrument")))
+        # "instrument: fut" too: every real futures name reads (FUT_NAME takes digits), so one that does not is a typo
+        unknown_nfo = not known and (bool(FNO.match(sym)) or o.get("instrument") == "fut"
+                                     or (fno and not o.get("instrument")))
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
