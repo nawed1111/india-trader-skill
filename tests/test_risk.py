@@ -269,6 +269,17 @@ class Futures(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("900-unit limit for one BANKNIFTY order", " ".join(r["reasons"]))
 
+    def test_a_futures_name_alone_is_f_and_o(self):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65, "lots": []}]}
+        sell = {"symbol": EX.FUT_CONTRACT, "side": "sell", "qty": "65", "type": "market"}
+        r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertIn("goes on NFO", " ".join(r["reasons"]))
+
+    def test_freeze_tickets_are_whole_lots(self):
+        r = one([opt_order(qty="3575")], fut_cfg(max_lots=60), now=FUT_NOW)["results"][0]
+        self.assertIn("3 tickets of at most 1,755", " ".join(r["reasons"]), r)
+
     def test_fno_off_blocks(self):
         r = one([fut_order()], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")

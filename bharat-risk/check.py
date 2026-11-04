@@ -351,7 +351,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         fno = o.get("instrument") in ("fut", "opt") or str(o.get("exchange") or "").upper() == "NFO"
         name = india.parse_option_symbol(sym)
         opt = o.get("instrument") == "opt" or name is not None
-        fno = fno or opt
+        fno = fno or opt or bool(FUT_NAME.match(sym))
         fut = fno and not opt
         unknown_nfo = fno and not o.get("instrument") and not (FUT_NAME.match(sym) or name)
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
@@ -472,8 +472,10 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                                                else str(o.get("underlying") or "").upper())
             cap_q = india.FREEZE_QTY.get(und)
             if cap_q and q > cap_q:
+                per = (cap_q // lot) * lot if lot else cap_q   # a ticket is whole lots
                 reasons.append("freeze: %s units is over NSE's %s-unit limit for one %s order; send it as %d tickets "
-                               "of at most %s" % (_num(q), format(cap_q, ","), und, -(-int(q) // cap_q), cap_q))
+                               "of at most %s" % (_num(q), format(cap_q, ","), und, -(-int(q) // per),
+                                                  format(per, ",")))
         product = str(o.get("product") or "MIS").strip().upper()
         if lot_missing:
             later.append(lot_missing)
