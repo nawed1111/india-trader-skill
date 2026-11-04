@@ -495,6 +495,16 @@ class Options(unittest.TestCase):
             self.assertEqual(json.load(fh)["orders"][0]["limit_price"], "0.05")
         self.assertNotIn("off NSE's 0.05 tick", out)
 
+    def test_flatten_refuses_a_limit_that_is_not_a_number(self):
+        ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
+        args = ["flatten", "--symbol", EX.OPT_CONTRACT, "--orders", self.orders, "--portfolio", self.pf,
+                "--plan", os.path.join(self.d, "none.json"), "--now", "2026-10-21 15:15"]
+        for bad in ("nan", "inf", "abc"):
+            code, out, err = run(args + ["--limit", bad])
+            self.assertEqual(code, 1, (bad, out, err))
+            self.assertIn("--limit", err, bad)
+            self.assertFalse(os.path.exists(self.orders), bad)
+
     def test_flatten_an_option_needs_a_limit(self):
         ticket.apply_fill(self.pf, {"budget": 200000}, EX.OPT_CONTRACT, "buy", 65, EX.OPT_PREMIUM, EX.OPT_DATE)
         args = ["flatten", "--symbol", EX.OPT_CONTRACT, "--orders", self.orders, "--portfolio", self.pf,
