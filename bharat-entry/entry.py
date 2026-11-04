@@ -814,6 +814,8 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
 def _check_instrument(a, sym):
     if a.instrument == "fut" and sym not in FUT_INDEX:
         raise EntryError("--instrument fut is for NIFTY or BANKNIFTY index futures (P2), not %s" % sym)
+    if a.fut_price is not None and a.instrument != "fut":
+        raise EntryError("--fut-price is the futures price: add --instrument fut")
     if a.fut_price is not None and a.fut_price <= 0:
         raise EntryError("--fut-price must be a price above 0")
 

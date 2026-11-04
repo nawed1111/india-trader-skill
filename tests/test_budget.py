@@ -245,3 +245,23 @@ class Rules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FuturesDeferred(unittest.TestCase):
+    def test_max_lots_zero_means_no_lots(self):
+        s = size.size_trade(dict(FUT_PLAN), fut_cfg(max_lots=0), today=EX.FUT_DATE)
+        self.assertEqual((s["lots"], s["bound_by"]), (0, "max lots"))
+        self.assertIsNone(size.bracket_order(s))
+
+    def test_the_index_price_in_prices_json_is_not_the_futures_price(self):
+        d = tempfile.mkdtemp()
+        paths = {}
+        for name, doc in (("plan", FUT_PLAN), ("config", fut_cfg()),
+                          ("prices", {"prices": {"NIFTY": 23900.0}, "as_of": "2026-10-21T04:05:00Z"})):
+            paths[name] = os.path.join(d, name + ".json")
+            with open(paths[name], "w") as fh:
+                json.dump(doc, fh)
+        code, text, _ = run(["--plan", paths["plan"], "--config", paths["config"], "--now", "2026-10-21 09:36",
+                             "--prices", paths["prices"], "--portfolio", os.path.join(d, "none.json")])
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("sized at", text)

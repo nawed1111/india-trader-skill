@@ -253,32 +253,6 @@ MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", 
 BHAV_KIND = {"IDF": "fut", "STF": "fut", "IDO": "opt", "STO": "opt"}
 
 
-def parse_lot_sizes(text):
-    """fo_mktlots.csv -> {SYMBOL: {"2026-11": 65, ...}}. Blank cells are left out."""
-    rows = [[c.strip() for c in line.split(",")] for line in text.splitlines() if line.strip()]
-    head = rows[0]
-    cols = {}
-    for i, h in enumerate(head):
-        m = h[:3].upper()
-        if m in MONTHS and h[3:4] == "-":
-            cols[i] = "20%s-%02d" % (h[4:6], MONTHS.index(m) + 1)
-    out = {}
-    for r in rows[1:]:
-        if len(r) < 2 or not r[1] or r[1].upper() == "SYMBOL":
-            continue
-        out[r[1]] = {k: int(r[i]) for i, k in cols.items() if i < len(r) and r[i].isdigit()}
-    return out
-
-
-def lot_size(lots, symbol, expiry):
-    """The lot of the contract's own expiry month from parse_lot_sizes()."""
-    key = expiry.strftime("%Y-%m")
-    lot = lots.get(symbol, {}).get(key)
-    if not lot:
-        raise ValueError("no lot size for %s %s in fo_mktlots.csv" % (symbol, key))
-    return lot
-
-
 def _num(x):
     return float(x) if x not in ("", None) else None
 
@@ -307,11 +281,12 @@ def futures(rows, symbol):
 
 
 def _trading_days_between(a, b):
-    """Trading days after a, up to and including b."""
+    """Trading days after a, up to and including b. A weekday in a year with no
+    holiday list yet counts as a trading day (a holiday can only lower the count)."""
     n, d = 0, a
     while d < b:
         d += timedelta(days=1)
-        n += trading_day(d)[0]
+        n += trading_day(d)[0] or (d.year not in HOLIDAY_YEARS and d.weekday() < 5)
     return n
 
 

@@ -387,3 +387,44 @@ class ReviewFixes(unittest.TestCase):
         code, _, err = run(["--orders", ORDERS_PATH, "--config", live, "--now", NOW, "--no-write"])
         self.assertEqual(code, 1)
         self.assertIn("--now and --today are for tests and paper only", err)
+
+
+class FuturesDeferred(unittest.TestCase):
+    def test_the_fno_gate_reads_instrument_and_exchange(self):
+        # a contract name that does not look like one is still F&O on NFO
+        r = one([fut_order(symbol="NIFTYOCT")], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("allow_fno", " ".join(r["reasons"]))
+
+    def test_an_expired_contract_blocks(self):
+        r = one([fut_order(expiry="2026-10-20")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("expired", " ".join(r["reasons"]))
+
+    def test_an_entry_with_no_expiry_blocks(self):
+        o = fut_order()
+        del o["expiry"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("expiry", " ".join(r["reasons"]))
+
+    def test_futures_fields_are_in_the_fingerprint(self):
+        o = fut_order()
+        for k, v in (("lot", 75), ("expiry", "2026-11-23"), ("basis_estimated", True), ("instrument", "eq"),
+                     ("underlying", "BANKNIFTY"), ("fut_price_source", "user"), ("lots", 2)):
+            self.assertNotEqual(check.fingerprint(o), check.fingerprint(dict(o, **{k: v})), k)
+            self.assertEqual(check.fingerprint(dict(o, **{k: v})), ticket.fingerprint(dict(o, **{k: v})), k)
+
+    def test_max_lots_zero_blocks(self):
+        r = one([fut_order()], fut_cfg(max_lots=0), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("max_lots 0", " ".join(r["reasons"]))
+
+    def test_a_futures_buy_earlier_in_the_batch_is_held(self):
+        buy = fut_order()
+        sell = {"symbol": EX.FUT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "market", "time_in_force": "day", "instrument": "fut", "lot": EX.FUT_LOT}
+        res = one([buy, sell], fut_cfg(), now=FUT_NOW)
+        self.assertEqual([r["verdict"] for r in res["results"]], ["PASS", "PASS"], res)
+        self.assertEqual(res["results"][1]["kind"], "exit")
+        self.assertEqual(res["cash_after"], 200000)   # closing the lot frees its margin

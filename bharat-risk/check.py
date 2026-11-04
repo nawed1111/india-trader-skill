@@ -98,6 +98,9 @@ SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,19}$")
 NEAR_BAND = 0.01
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 CENT = 0.005
+# futures fields that change the verdict: editing one after a PASS must change the fingerprint
+FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
+              "fut_price_source")
 FRESH_MINUTES = 15
 REF_WORDS = {"plan": "the plan's entry", "price": "the latest price", "limit": "the limit price",
              "stop price": "the stop price", "stale price": "an old price"}
@@ -187,7 +190,7 @@ def read_json(path, what, required=True):
 
 def fingerprint(order):
     """Same function in bharat-broker/ticket.py: the exact order that was checked."""
-    core = {k: order[k] for k in ORDER_FIELDS if k in order and order[k] is not None}
+    core = {k: order[k] for k in ORDER_FIELDS + FUT_FIELDS if k in order and order[k] is not None}
     blob = json.dumps(core, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -313,6 +316,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
     seen = set()
     results = []
     batch_entries, batch_loss = 0, 0.0
+    batch_margin = {}                    # futures margin blocked by buys earlier in this batch
     if not c.get("paper", True):
         top_warn.append("LIVE account (\"paper\": false): these orders use real money")
     top_warn.extend(win_warns)
@@ -396,7 +400,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                          % (oc or "advanced_instructions"))
 
         # asset
-        if sym and FNO.match(sym.replace(" ", "")):
+        if sym and (fut or FNO.match(sym.replace(" ", ""))):
             if not c.get("allow_fno"):
                 reasons.append("asset: %s is an F&O contract; P1 trades cash stocks only "
                                "(\"allow_fno\": false)" % sym)
@@ -489,7 +493,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     later.append("margin: %d lot%s need %s, which leaves %s cash, under your %s%% buffer of %s" % (
                         lots, "" if lots == 1 else "s", money(need_margin), money(max(cash - need_margin, 0)),
                         _pct(c["cash_buffer_pct"]), money(buffer_inr)))
-            max_lots = int(_f(c.get("max_lots")) or 1)
+            max_lots = 1 if _f(c.get("max_lots")) is None else int(_f(c["max_lots"]))
             held_lots = int(max(held, 0) // lot) if lot else 0
             if lots + held_lots > max_lots:
                 later.append("lots: %d lots%s is over your max_lots %d" % (
@@ -499,7 +503,14 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "in a session), so a market order could fill far from the plan and break the max loss. "
                              "Send a limit order (bharat-budget size.py --limit) or give the live price "
                              "(bharat-exit --entry PRICE)")
-            if str(o.get("expiry") or "") == today:
+            exp = str(o.get("expiry") or "")
+            if not exp:
+                later.append("expiry: the futures entry has no expiry date (bharat-budget writes it), so the "
+                             "expiry-day check cannot run")
+            elif exp < today:
+                later.append("expiry: %s expired on %s; trade a live contract%s" % (
+                    sym, exp, (" (%s?)" % next_contract(sym)) if next_contract(sym) else ""))
+            elif exp == today:
                 nxt = next_contract(sym)
                 later.append("expiry: %s expires today; no new entry in an expiring contract%s" % (
                     sym, (": trade %s" % nxt) if nxt else ""))
@@ -656,8 +667,19 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if kind == "entry" and side in ("buy", "sell"):
                 batch_entries += 1
                 batch_loss += max_loss or 0.0
-            if side == "buy" and need_margin is not None:
-                acct["cash"] -= need_margin
+            if fut:
+                # a lot holds margin, not its notional: the margin stays account value while the lot is open
+                if side == "buy" and need_margin is not None:
+                    acct["cash"] -= need_margin
+                    acct["values"][sym] = acct["values"].get(sym, 0.0) + need_margin
+                    batch_margin[sym] = batch_margin.get(sym, 0.0) + need_margin
+                elif side == "sell" and kind == "exit" and q and held > 0 and batch_margin.get(sym):
+                    freed = batch_margin[sym] * min(q / held, 1.0)
+                    batch_margin[sym] -= freed
+                    acct["cash"] += freed
+                    acct["values"][sym] -= freed
+                if q is not None:
+                    acct["shares"][sym] = held + (q if side == "buy" else -q)
             elif side == "buy":
                 if value is not None:
                     acct["cash"] -= value

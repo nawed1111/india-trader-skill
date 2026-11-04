@@ -400,7 +400,7 @@ def size_futures(plan, c, sym, budget, limit, cash, entry_plan, stop, target):
     else:
         limits.append({"name": "margin", "lots": int(available // m + EPS), "how": "%s %s / %s a lot" % (
             money(available), cash_note, money(m))})
-    max_lots = int(_f(c.get("max_lots")) or 1)
+    max_lots = 1 if _f(c.get("max_lots")) is None else int(_f(c["max_lots"]))
     limits.append({"name": "max lots", "lots": max_lots, "how": "max_lots in the config"})
     cap = _f(c.get("max_fut_notional_inr"))
     if cap:
@@ -608,7 +608,8 @@ def run_plan(a, cfg):
     sym = str((plan or {}).get("symbol") or "").upper()
     notes, price = [], None
     ppath = a.prices or ("trader/prices.json" if os.path.exists("trader/prices.json") else None)
-    if ppath and limit is None and sym:
+    # ponytail: prices.json holds the index (NIFTY), not the contract: a futures plan is sized at its own entry
+    if ppath and limit is None and sym and (plan or {}).get("instrument") != "fut":
         pdoc = read_json(ppath, "prices")
         p, t, fresh = fresh_price(pdoc, sym, now)
         if p is not None and fresh:

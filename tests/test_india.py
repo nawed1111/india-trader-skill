@@ -142,8 +142,6 @@ class Contracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rows = _bhav("fo-bhavcopy-20261103.csv.zip", "p0")
-        with open(os.path.join(P2, "fo_mktlots.csv")) as fh:
-            cls.lots = india.parse_lot_sizes(fh.read())
 
     def test_nifty_front_month(self):
         f = india.futures(self.rows, "NIFTY")[0]
@@ -177,16 +175,6 @@ class Contracts(unittest.TestCase):
     def test_basis_ratio(self):
         f = india.futures(self.rows, "NIFTY")[0]
         self.assertEqual(india.basis_ratio(f), 23780.50 / 23810.85)
-
-    def test_lot_sizes(self):
-        self.assertEqual(self.lots["NIFTY"]["2026-11"], 65)
-        self.assertEqual(india.lot_size(self.lots, "BANKNIFTY", date(2026, 12, 29)), 30)
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "BANKNIFTY", date(2027, 12, 28))  # blank cell
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "NIFTY", date(2031, 7, 29))  # no column
-        with self.assertRaises(ValueError):
-            india.lot_size(self.lots, "NOSUCH", date(2026, 11, 23))
 
     def test_plain_csv_and_old_day(self):
         import io, zipfile

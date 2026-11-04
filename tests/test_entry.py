@@ -633,3 +633,22 @@ class SkillDoc(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FuturesDeferred(unittest.TestCase):
+    def test_fut_price_needs_instrument_fut(self):
+        code, _, err = run(["check", "RELIANCE", "--offline", REL, "--now", "2026-10-19 09:50",
+                            "--fut-price", "23050"])
+        self.assertEqual(code, 1)
+        self.assertIn("--instrument fut", err)
+
+    def test_year_end_without_next_year_holidays(self):
+        # no 2027 holiday list: 30 Dec is not "the day before" the 25 Jan expiry
+        rows = [dict(kind="fut", symbol="NIFTY", contract="NIFTY27JANFUT", expiry=datetime.date(2027, 1, 25),
+                     strike=None, right=None, close=24000.0, settle=24000.0, underlying=23900.0, oi=1, lot=65,
+                     date=datetime.date(2026, 12, 29))]
+        for day in (datetime.date(2026, 12, 30), datetime.date(2026, 12, 31)):
+            f = entry.future_leg(rows, "NIFTY", day, 23900.0)
+            self.assertEqual(f["contract"], "NIFTY27JANFUT", day)
+            self.assertNotIn("rolls over", " ".join(f["warnings"]), day)
+

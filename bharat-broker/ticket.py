@@ -70,6 +70,8 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
 YES_WORDS = ("yes", "y")
 SEGMENT = "eq_intraday"
 FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
+FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
+              "fut_price_source")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
 MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)
 
 
@@ -145,7 +147,7 @@ def rec_day(rec):
 
 def fingerprint(order):
     """Same function as bharat-risk/check.py: identifies the exact order."""
-    core = {k: order[k] for k in ORDER_FIELDS if k in order and order[k] is not None}
+    core = {k: order[k] for k in ORDER_FIELDS + FUT_FIELDS if k in order and order[k] is not None}
     blob = json.dumps(core, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
