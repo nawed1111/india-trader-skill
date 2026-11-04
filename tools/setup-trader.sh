@@ -75,17 +75,30 @@ fi
 
 echo "== 5. The Kite server: one shared copy in the background"
 if [ -f "$CFG" ] && grep -q '"kite"' "$CFG"; then
-  cp "$CFG" "$CFG.backup-$(date +%Y%m%d-%H%M%S)"
+  BACKUP="$CFG.backup-$(date +%Y%m%d-%H%M%S)"
+  (umask 077 && cp "$CFG" "$BACKUP")
+  echo "   backup: $BACKUP (it holds your old keys: only you can read it; delete it once this setup works)"
 fi
+for b in "$CFG".backup-*; do   # backups from earlier runs hold the keys too
+  if [ -f "$b" ]; then chmod 600 "$b"; fi
+done
 OS="$OS" CFG="$CFG" W="$W" KITE_ENV="$KITE_ENV" SERVICE="$SERVICE" LABEL="$LABEL" RESTART="$RESTART" \
 KITE_BIN="$W/kite-mcp-server/kite-mcp-server" python3 - <<'PY'
 import json, os, plistlib
 
 E = os.environ
 HOME = os.path.expanduser("~")
-ORDER_TOOLS = "place_order,modify_order,cancel_order"
-NEEDS_APPROVAL = ["mcp__kite__" + t for t in ("place_order", "modify_order", "cancel_order",
-                                              "place_gtt_order", "modify_gtt_order", "delete_gtt_order")]
+# every tool that places, changes or cancels an order, a GTT included: off at the server, and asking in Claude
+ORDER_TOOL_NAMES = ("place_order", "modify_order", "cancel_order", "place_gtt_order", "modify_gtt_order",
+                    "delete_gtt_order")
+ORDER_TOOLS = ",".join(ORDER_TOOL_NAMES)
+NEEDS_APPROVAL = ["mcp__kite__" + t for t in ORDER_TOOL_NAMES]
+
+
+def with_order_tools(excluded):
+    """An EXCLUDED_TOOLS value plus any order tool it leaves out."""
+    have = [t for t in (excluded or "").split(",") if t]
+    return ",".join(have + [t for t in ORDER_TOOL_NAMES if t not in have])
 
 
 def load_json(path):
@@ -131,23 +144,29 @@ if E["OS"] == "mac" and os.path.exists(E["SERVICE"]):
 have = read_env(E["KITE_ENV"]) if os.path.exists(E["KITE_ENV"]) else None
 moved = next((e for e in old if real(e)), None)
 if have is None or (not real(have) and moved):
-    keys = moved or {"KITE_API_KEY": "PASTE_KEY_LATER", "KITE_API_SECRET": "PASTE_SECRET_LATER",
-                     "EXCLUDED_TOOLS": ORDER_TOOLS}
+    keys = moved or {"KITE_API_KEY": "PASTE_KEY_LATER", "KITE_API_SECRET": "PASTE_SECRET_LATER"}
     lines = ["# Your Kite Connect key and secret, for the shared Kite MCP server. Only you can read this file.",
              "# Never put them in a repo or a chat. After any change, restart the server:",
              "#   " + E["RESTART"],
              "# Delete the EXCLUDED_TOOLS line only when you go live (see /bharat-broker).",
-             "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"]]
-    if keys.get("EXCLUDED_TOOLS"):  # an old setup that already went live keeps its order tools on
-        lines.append("EXCLUDED_TOOLS=" + keys["EXCLUDED_TOOLS"])
+             "KITE_API_KEY=" + keys["KITE_API_KEY"], "KITE_API_SECRET=" + keys["KITE_API_SECRET"],
+             # always, moved keys too: an old config without the line never chose to go live
+             "EXCLUDED_TOOLS=" + with_order_tools(keys.get("EXCLUDED_TOOLS"))]
     os.makedirs(os.path.dirname(E["KITE_ENV"]), mode=0o700, exist_ok=True)
     fd = os.open(E["KITE_ENV"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     os.chmod(E["KITE_ENV"], 0o600)
     print("   key file: " + E["KITE_ENV"] + (" (your keys, moved from the old setup)" if moved else " (placeholder keys)"))
+    if moved:
+        print("   the order tools are OFF. If you were trading live, delete the EXCLUDED_TOOLS line in that file,")
+        print("   then restart the server: " + E["RESTART"])
 else:
     print("   key file kept: " + E["KITE_ENV"])
+    if have.get("EXCLUDED_TOOLS") and with_order_tools(have["EXCLUDED_TOOLS"]) != have["EXCLUDED_TOOLS"]:
+        print("   note: its EXCLUDED_TOOLS line leaves some order tools on. To switch them all off, make it")
+        print("      EXCLUDED_TOOLS=" + with_order_tools(have["EXCLUDED_TOOLS"]))
+        print("   then restart the server: " + E["RESTART"])
 
 # The service: started at login, restarted if it stops (it exits while another copy still holds port 8080)
 exe = E["KITE_BIN"]

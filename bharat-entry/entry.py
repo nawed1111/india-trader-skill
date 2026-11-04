@@ -103,6 +103,10 @@ def load_bhavcopy(path, day):
         except (OSError, ValueError, KeyError) as e:
             raise EntryError("cannot read the bhavcopy %s: %s" % (path, e))
     last = india.prev_trading_day(day)
+    if last is None:
+        raise EntryError("no known trading day in the 30 days before %s: NSE's holiday list for %d is not in india.py "
+                         "yet. Save the last session's F&O bhavcopy from nseindia.com and pass --bhavcopy FILE"
+                         % (day, day.year))
     try:
         return india.parse_bhavcopy(india.nse_get(BHAV_URL % last.strftime("%Y%m%d"), want_json=False, warm=False))
     except (india.NSEError, ValueError, KeyError) as e:
@@ -699,12 +703,15 @@ def entry_doc(res, now_utc):
 
 
 def write_json(path, doc):
+    """Write to a temp file and swap it in: a write cut short leaves the old file, never half of one."""
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
         fh.write("\n")
+    os.replace(tmp, path)
 
 
 # ---------------------------------------------------------------- words
@@ -789,18 +796,20 @@ def bar_line(b, res):
     lvl = res.get("level")
     t = res.get("trigger")
     n_or = orr.get("of") or 0
+    down = res.get("index_side") == "down"   # a bought put: the trigger is a close BELOW the range low
+    side_word = "below" if down else "above"
     if res["setup"] == "orb" and b["slot"] < n_or:
         seen = [x for x in res["_bars"] if x["slot"] <= b["slot"]]
         note = "range so far Rs %.2f to Rs %.2f" % (min(x["l"] for x in seen), max(x["h"] for x in seen))
         if b["slot"] == n_or - 1:
             note = "opening range set: high Rs %.2f, low Rs %.2f" % (orr["high"], orr["low"])
     elif t and t["bar_index"] == b["slot"]:
-        note = "TRIGGERED: closed above Rs %.2f (%+.2f%%). Get in now if you take it: %s, Rs %.2f" % (
-            lvl, t["pct_over"], t["time"], t["price"])
+        note = "TRIGGERED: closed %s Rs %.2f (%+.2f%%). Get in now if you take it: %s, Rs %.2f" % (
+            side_word, lvl, t["pct_over"], t["time"], t["price"])
     elif lvl is None:
         note = ""
-    elif b["c"] > lvl:
-        note = "above Rs %.2f" % lvl
+    elif (b["c"] < lvl) if down else (b["c"] > lvl):
+        note = "%s Rs %.2f" % (side_word, lvl)
         if res["setup"] == "level" or b["slot"] >= n_or:
             avg = orr.get("avg_volume")
             if res.get("min_volume_x") and avg:
@@ -808,7 +817,7 @@ def bar_line(b, res):
             elif b["end"] < datetime.datetime.combine(b["et"].date(), parse_hhmm(res["no_entries_before"], "x")):
                 note += ", but no entries before %s" % res["no_entries_before"]
     else:
-        note = "Rs %.2f under Rs %.2f" % (lvl - b["c"], lvl)
+        note = "Rs %.2f %s Rs %.2f" % (abs(lvl - b["c"]), "over" if down else "under", lvl)
     return "%5s bar  closed Rs %.2f  %s" % (start, b["c"], note)
 
 

@@ -95,6 +95,15 @@ def to_local(utc):
     return india.to_ist(utc).replace(tzinfo=None)
 
 
+def parse_now(text):
+    """--now -> aware UTC. A time without an offset is IST, as in every bharat-* tool."""
+    try:
+        d = _dt.datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise NewsError('--now wants a time like "2026-10-19 09:30" (IST) or ...Z (UTC), not %r' % text)
+    return india.ist_to_utc(d)
+
+
 # ---------------------------------------------------------------- inputs
 
 def load_json(path):
@@ -102,6 +111,27 @@ def load_json(path):
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     return None
+
+
+def load_state(path):
+    """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
+    try:
+        return load_json(path) or {}, None
+    except ValueError as exc:
+        return {}, ("the state file %s could not be read (%s): starting fresh, so items you have seen may show "
+                    "again" % (path, exc))
+
+
+def save_state(path, state):
+    """Write to a temp file and swap it in: a write cut short leaves the old state, never half of one."""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
 
 
 def watch_from_files(portfolio="trader/portfolio.json", watchlist="trader/watchlist.json",
@@ -434,7 +464,7 @@ def main(argv=None):
     ap.add_argument("--no-moves", action="store_true", help="skip the price line per ticker")
     ap.add_argument("--move-pct", type=float, default=MOVE_PCT, help="flag a move this big (percent)")
     ap.add_argument("--offline", metavar="DIR")
-    ap.add_argument("--now", help="ISO time, for reproducible runs")
+    ap.add_argument("--now", help='pretend it is this time ("2026-10-19 09:30" IST, or ISO with an offset)')
     ap.add_argument("--dry-run", action="store_true", help="do not update the state file")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -449,9 +479,13 @@ def main(argv=None):
         print("news: no tickers. Pass --tickers, or run /bharat-scanner first (it writes "
               "trader/watchlist.json).", file=sys.stderr)
         return 2
-    now = parse_time(args.now) if args.now else _dt.datetime.now(_dt.timezone.utc)
-    state = load_json(args.state) or {}
-    errors = []
+    try:
+        now = parse_now(args.now) if args.now else _dt.datetime.now(_dt.timezone.utc)
+    except NewsError as exc:
+        print("news: %s" % exc, file=sys.stderr)
+        return 2
+    state, note = load_state(args.state)
+    errors = [note] if note else []
     fetcher = Fetcher(offline=args.offline)
     items = collect(fetcher, watch, state, nse=not args.no_nse, errors=errors)
     items = dedupe(tag(items, watch))
@@ -466,12 +500,7 @@ def main(argv=None):
         sys.stdout.write(render(shown, errors, now, moves, args.move_pct))
     if not args.dry_run:
         remember(items, state, now)
-        folder = os.path.dirname(args.state)
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        with open(args.state, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-            fh.write("\n")
+        save_state(args.state, state)
     return 0 if any(i["new"] for i in shown) else 1
 
 

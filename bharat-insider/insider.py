@@ -78,6 +78,15 @@ class Fetcher(object):
             raise InsiderError(str(e))          # names the URL
 
 
+def parse_now(text):
+    """--now -> aware UTC. A time without an offset is IST, as in every bharat-* tool."""
+    try:
+        d = _dt.datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise InsiderError('--now wants a time like "2026-11-04 08:30" (IST) or ...Z (UTC), not %r' % text)
+    return india.ist_to_utc(d)
+
+
 def _json(data, what):
     try:
         return json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
@@ -180,6 +189,27 @@ def load_json(path):
     return None
 
 
+def load_state(path):
+    """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
+    try:
+        return load_json(path) or {}, None
+    except ValueError as e:
+        return {}, ("the state file %s could not be read (%s): starting fresh, so rows you have seen may show "
+                    "again" % (path, e))
+
+
+def save_state(path, state):
+    """Write to a temp file and swap it in: a write cut short leaves the old state, never half of one."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
 def fingerprint(row):
     return hashlib.sha1(row["id"].encode("utf-8")).hexdigest()[:16]
 
@@ -247,7 +277,7 @@ def main(argv=None):
     p.add_argument("--plan", default="trader/plan.json")
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--state", default="trader/state/insider.json")
-    p.add_argument("--now", help="ISO time, for reproducible runs")
+    p.add_argument("--now", help='pretend it is this time ("2026-11-04 08:30" IST, or ISO with an offset)')
     p.add_argument("--dry-run", action="store_true", help="do not update the state file")
     for sp in sub.choices.values():
         sp.add_argument("--offline", metavar="DIR")
@@ -300,11 +330,14 @@ def main(argv=None):
     if not symbols:
         print("insider.py: no symbols. Pass --symbols, or run /bharat-scanner first.", file=sys.stderr)
         return 2
-    now = _dt.datetime.fromisoformat(a.now.replace("Z", "+00:00")) if a.now else \
-        _dt.datetime.now(_dt.timezone.utc)
-    state = load_json(a.state) or {}
+    try:
+        now = parse_now(a.now) if a.now else _dt.datetime.now(_dt.timezone.utc)
+    except InsiderError as e:
+        print("insider.py: %s" % e, file=sys.stderr)
+        return 1
+    state, note = load_state(a.state)
     seen = state.get("seen", {})
-    errors = []
+    errors = [note] if note else []
     pit, deals, flows = collect(fetcher, symbols, errors)
     mine = [d for d in deals if d["symbol"] in symbols]
     fresh = [r for r in pit + mine + flows if fingerprint(r) not in seen]
@@ -322,12 +355,7 @@ def main(argv=None):
         print("Public filings, not inside information. Not financial advice.")
     if not a.dry_run:
         remember(pit + mine + flows, state, now)
-        d = os.path.dirname(a.state)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        with open(a.state, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-            fh.write("\n")
+        save_state(a.state, state)
     return 0 if fresh else 1
 
 

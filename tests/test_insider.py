@@ -88,6 +88,21 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Nothing new.", out)
 
+    def test_an_unreadable_state_file_starts_fresh(self):
+        os.makedirs(os.path.dirname(self.state), exist_ok=True)
+        with open(self.state, "w") as fh:
+            fh.write('{"seen": {')                               # cut short
+        code, out, err = run(["new", "--symbols", "RELIANCE", "--offline", DIR, "--state", self.state, "--now", NOW])
+        self.assertEqual(code, 0, err)
+        self.assertIn("starting fresh", out)
+        with open(self.state) as fh:
+            self.assertTrue(json.load(fh)["seen"])
+
+    def test_a_now_without_a_zone_is_ist(self):
+        run(["new", "--symbols", "RELIANCE", "--offline", DIR, "--state", self.state, "--now", "2026-11-04 08:30"])
+        with open(self.state) as fh:
+            self.assertEqual(json.load(fh)["last_check"], "2026-11-04T03:00:00+00:00")   # 8:30 IST
+
     def test_one_feed_failing_keeps_the_others(self):
         class Blocked(ins.Fetcher):
             def get(self, url, name):

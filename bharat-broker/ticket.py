@@ -12,7 +12,8 @@ work around the one moment that matters, your yes:
             today (matched by fingerprint) and nobody has decided on it yet.
   approve   records your explicit yes for ONE order, with your reply word for
             word. It refuses "yes to all", "sure", "ok", "haan", a yes that
-            names a different stock or amount, and any order that is not READY.
+            names a different stock, side or amount, a yes with words it cannot
+            check, and any order that is not READY.
   decline   records a no.
   result    records what happened: placed (with the broker's order id, or
             the paper fill), denied, or failed.
@@ -69,9 +70,15 @@ STRING_FIELDS = ("qty", "notional", "limit_price", "stop_price", "trail_price", 
 TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at the open",
              "cls": "at the close", "ioc": "immediate or cancel", "fok": "fill or kill"}
 YES_WORDS = ("yes", "y")
+# the only other words a yes may carry: anything else (a ticker, "go for it") is asked again
+PLAIN_WORDS = {"please", "place", "it", "this", "that", "the", "order", "one", "go", "ahead", "now", "confirm",
+               "confirmed", "share", "shares", "unit", "units", "lot", "lots", "at", "rs", "of", "for", "market",
+               "max", "loss", "take", "profit", "target", "limit", "price", "qty", "quantity"}
+SIDE_WORDS = ("buy", "sell")
 SEGMENT = "eq_intraday"
-FUT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z]{3}FUT$")
-OPT_NAME = re.compile(r"^[A-Z&\-]+\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
+# digits too, as in bharat-risk/check.py: 360ONE26NOVFUT, NIFTYNXT5026NOVFUT, 360ONE26NOV1200CE
+FUT_NAME = re.compile(r"^[A-Z0-9&\-]+?\d{2}[A-Z]{3}FUT$")
+OPT_NAME = re.compile(r"^[A-Z0-9&\-]+?\d{2}[A-Z0-9]{3}\d+(CE|PE)$")
 FUT_FIELDS = ("instrument", "underlying", "lot", "lots", "expiry", "basis_estimated", "basis_date",
               "fut_price_source", "right", "strike", "premium_source", "oi", "illiquid", "iv")   # same as bharat-risk/check.py: in the fingerprint, not sent to Kite
 MARKET_PROTECTION = -1  # Kite's automatic protection; MARKET and SL-M orders without it are rejected (since 1 Apr 2026)
@@ -317,12 +324,21 @@ def parse_yes(reply, order, batch_symbols=()):
     named = tokens & others
     if named:
         return False, "the reply names %s, but this order is for %s" % (", ".join(sorted(named)), sym)
-    nums = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", raw)]
-    if nums:
-        want = amount_numbers(order)
-        if not any(abs(n - w) < 0.005 for n in nums for w in want):
-            return False, "the reply says %s, but this order is %s" % (
-                ", ".join(_str_num(n) for n in nums), plain(order))
+    side = str(order.get("side", "")).lower()
+    wrong = [w for w in words[1:] if w in SIDE_WORDS and w != side]
+    if wrong:
+        return False, "the reply says %s, but this order is a %s" % (wrong[0], side)
+    own = set(re.findall(r"[a-z']+", sym.lower()))
+    unknown = [w for w in words[1:] if w not in PLAIN_WORDS and w not in YES_WORDS and w != side and w not in own]
+    if unknown:
+        return False, "the reply has words this check cannot confirm (%s); ask for a plain yes" % ", ".join(unknown)
+    # the order's own name may carry digits (NIFTY26NOV24000CE): they are not amounts
+    rest = re.sub(re.escape(sym), " ", raw, flags=re.I) if sym else raw
+    nums = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", rest)]
+    want = amount_numbers(order)
+    off = [n for n in nums if not any(abs(n - w) < 0.005 for w in want)]
+    if off:
+        return False, "the reply says %s, but this order is %s" % (", ".join(_str_num(n) for n in off), plain(order))
     return True, "explicit yes for %s" % plain(order)
 
 

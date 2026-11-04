@@ -91,9 +91,12 @@ class SetupScript(unittest.TestCase):
         # placeholder keys and the order tools off, in a file only you can read
         self.assertEqual(stat.S_IMODE(os.stat(self.keys).st_mode), 0o600)
         lines = self.key_file()
-        for line in ("KITE_API_KEY=PASTE_KEY_LATER", "KITE_API_SECRET=PASTE_SECRET_LATER",
-                     "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"):
+        for line in ("KITE_API_KEY=PASTE_KEY_LATER", "KITE_API_SECRET=PASTE_SECRET_LATER"):
             self.assertIn(line, lines)
+        # every order tool that asks in Claude is also off at the server, GTT orders included
+        excluded = set(next(x for x in lines if x.startswith("EXCLUDED_TOOLS=")).split("=", 1)[1].split(","))
+        self.assertLessEqual({"place_order", "modify_order", "cancel_order", "place_gtt_order"}, excluded)
+        self.assertEqual({t.replace("mcp__kite__", "") for t in self.ask_rules()} - excluded, set())
         # one copy, HTTP mode on loopback, started at login and restarted if it stops
         plist_path = os.path.join(self.home, "Library", "LaunchAgents", "local.kite-mcp-server.plist")
         with open(plist_path, "rb") as fh:
@@ -113,10 +116,15 @@ class SetupScript(unittest.TestCase):
 
     def test_moves_old_desktop_keys_over_takes_kite_out_and_keeps_the_rest(self):
         os.makedirs(os.path.dirname(self.cfg))
+        # the old manual setup had no EXCLUDED_TOOLS: that is not a choice to go live
         old_kite = {"command": "/old/kite-mcp-server", "env": {
-            "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}  # went live
+            "APP_MODE": "stdio", "KITE_API_KEY": "typed-key", "KITE_API_SECRET": "typed-secret"}}
         with open(self.cfg, "w") as fh:
             json.dump({"mcpServers": {"kite": old_kite, "other": {"command": "x"}}, "theme": "dark"}, fh)
+        os.chmod(self.cfg, 0o644)
+        older = self.cfg + ".backup-20261101-090000"          # left by an earlier run, keys and all
+        shutil.copy(self.cfg, older)
+        os.chmod(older, 0o644)
         os.makedirs(os.path.join(self.target, ".claude"))
         with open(os.path.join(self.target, ".claude", "settings.json"), "w") as fh:
             json.dump({"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}, fh)
@@ -125,21 +133,32 @@ class SetupScript(unittest.TestCase):
         lines = self.key_file()
         self.assertIn("KITE_API_KEY=typed-key", lines)
         self.assertIn("KITE_API_SECRET=typed-secret", lines)
-        self.assertFalse([x for x in lines if x.startswith("EXCLUDED_TOOLS")])  # order tools stay on, as you had them
+        # moved keys come over with the order tools off, and the script says how to go live again
+        self.assertTrue([x for x in lines if x.startswith("EXCLUDED_TOOLS=place_order")], lines)
+        self.assertIn("delete the EXCLUDED_TOOLS line", r.stdout)
         with open(self.cfg) as fh:
             doc = json.load(fh)
         self.assertNotIn("kite", doc["mcpServers"])
         self.assertEqual(doc["mcpServers"]["other"], {"command": "x"})
         self.assertEqual(doc["theme"], "dark")
-        self.assertTrue([f for f in os.listdir(os.path.dirname(self.cfg)) if ".backup-" in f])
+        backups = [os.path.join(os.path.dirname(self.cfg), f) for f in os.listdir(os.path.dirname(self.cfg))
+                   if ".backup-" in f]
+        self.assertEqual(len(backups), 2)
+        for b in backups:                                       # they hold the old keys: only you can read them
+            self.assertEqual(stat.S_IMODE(os.stat(b).st_mode), 0o600, b)
+        self.assertIn("holds your old keys", r.stdout)
         with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
             settings = json.load(fh)
         self.assertEqual((settings["model"], settings["permissions"]["allow"]), ("opus", ["Bash(ls)"]))
-        # a second run keeps the key file you edited and adds no duplicate rules
-        with open(self.keys, "a") as fh:
-            fh.write("EXCLUDED_TOOLS=place_order\n")
-        self.assertEqual(self.run_script(self.target).returncode, 0)
-        self.assertIn("EXCLUDED_TOOLS=place_order", self.key_file())
+        # a second run keeps the key file you edited and adds no duplicate rules; an older line
+        # without the GTT tools is kept as it is, with a note
+        old_line = "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"
+        with open(self.keys, "w") as fh:
+            fh.write("\n".join([x for x in lines if not x.startswith("EXCLUDED_TOOLS")] + [old_line]) + "\n")
+        r = self.run_script(self.target)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(old_line, self.key_file())
+        self.assertIn("place_gtt_order", r.stdout)
         self.assertEqual(self.ask_rules().count("mcp__kite__place_order"), 1)
 
     def test_linux_runs_it_as_a_systemd_user_service(self):

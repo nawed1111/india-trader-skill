@@ -251,6 +251,13 @@ class Calendar(unittest.TestCase):
         self.assertFalse(r["calendar_known"])
         self.assertIn("holiday list unknown for 2028", r["reason"])
 
+    def test_no_known_last_session_is_a_plain_error(self):
+        # Feb 2027: the 2027 holiday list is not in india.py yet, so no trading day is known in the last 30 days
+        code, out, err = run(["check", "NIFTY", "--instrument", "fut", "--offline", NSEI, "--now", "2027-02-15 10:00"])
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("holiday list for 2027", err)
+        self.assertIn("--bhavcopy FILE", err)
+
     def test_muhurat_session(self):
         d = shift_to(doc(), datetime.date(2026, 11, 8), datetime.time(14, 20))
         cfg = {"no_entries_before": "14:35", "no_entries_after": "15:15"}
@@ -711,6 +718,17 @@ class Options(unittest.TestCase):
         first = [b for b in res["_bars"] if b["slot"] >= 3 and b["c"] < low][0]
         self.assertEqual(res["trigger"]["bar_index"], first["slot"])
         self.assertEqual(e["option"]["right"], "PE")
+
+    def test_watch_lines_for_a_put_say_below(self):
+        # NIFTY Oct 19: range low 22970.85; the 12:00 bar closed under it at 22954.25
+        ch = entry.get_chart("NIFTY", "5m", datetime.date(2026, 10, 19), NSEI, datetime.date(2026, 10, 19))
+        res = entry.evaluate(ch, entry.parse_now("2026-10-19 12:05"), below=True)
+        bar = {b["et"].strftime("%H:%M"): b for b in res["_bars"]}
+        self.assertEqual(entry.bar_line(bar["09:30"], res),
+                         " 9:30 bar  closed Rs 23096.90  Rs 126.05 over Rs 22970.85")     # not yet: still above
+        self.assertEqual(entry.bar_line(bar["12:00"], res),
+                         "12:00 bar  closed Rs 22954.25  TRIGGERED: closed below Rs 22970.85 (-0.07%). Get in now "
+                         "if you take it: 12:05 PM, Rs 22954.25")
 
     def test_an_illiquid_strike_warns(self):
         with open("cfg.json", "w") as fh:

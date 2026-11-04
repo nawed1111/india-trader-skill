@@ -46,8 +46,8 @@ What blocks an entry (on top):
   loss          qty x (entry - stop) + round-trip costs at the stop over
                 max_loss_per_trade_inr. The entry is the limit price for a
                 limit order, else the HIGHER of the plan's entry and a fresh
-                price (under 15 minutes old), so a stale plan cannot
-                understate the risk
+                price (under 15 minutes old), the LOWER for a short sell, so a
+                stale plan cannot understate the risk
   reward:risk   (target - entry) / (entry - stop) under min_reward_risk
   costs         round-trip costs at the target over max_cost_share (0.25) of
                 the reward at the target: on a small trade the charges eat
@@ -445,11 +445,12 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         if ref is None:
             cands = [(p, w) for p, w in ((plan_entry, "plan"), (live, "price")) if p]
             if cands:
-                ref, ref_from = max(cands, key=lambda x: x[0])
+                # the price further from the stop: higher for a buy, lower for a sell (a short's stop is above it)
+                ref, ref_from = (min if side == "sell" else max)(cands, key=lambda x: x[0])
                 ref = _cent(ref)
-                if live and ref_from == "price" and plan_entry and live > plan_entry + CENT:
-                    info.append("%s last %s is above the plan's entry %s: the risk is measured from %s"
-                                % (sym, _p(ref), _p(plan_entry), _p(ref)))
+                if live and ref_from == "price" and plan_entry and abs(live - plan_entry) > CENT:
+                    info.append("%s last %s is %s the plan's entry %s: the risk is measured from %s"
+                                % (sym, _p(ref), "below" if side == "sell" else "above", _p(plan_entry), _p(ref)))
             elif sym in prices:
                 ref, ref_from = prices[sym], "stale price"
         if plan_entry and live is None and sym in prices and price_times is not None and typ == "market":

@@ -1013,12 +1013,15 @@ def render_chart(doc, height=17):
 # ---------------------------------------------------------------- commands
 
 def _write(path, doc):
+    """Write to a temp file and swap it in: a write cut short leaves the old file, never half of one."""
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=1)
         fh.write("\n")
+    os.replace(tmp, path)
 
 
 def compute(a):

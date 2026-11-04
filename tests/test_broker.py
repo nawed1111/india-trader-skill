@@ -59,6 +59,29 @@ class ExplicitYes(unittest.TestCase):
                   "yes, stop 1215.35", "yes?", "no", "not yes", "yes, wait", "yes if it is under 1230"):
             self.assertFalse(self.yes(r), r)
 
+    def test_every_number_in_the_yes_must_be_this_orders(self):
+        # 73 is the qty, but 1300 is not the limit, stop, target or max loss
+        for r in ("yes 73 at 1300", "yes 73 shares, and 5000 more", "yes 73 at 1227.85"):
+            self.assertFalse(self.yes(r, order=rel(type="limit", limit_price="1227.80")), r)
+        self.assertTrue(self.yes("yes 73 at 1227.80", order=rel(type="limit", limit_price="1227.80")))
+
+    def test_a_yes_naming_a_stock_outside_the_batch(self):
+        for r in ("yes TCS", "yes tcs", "yes buy INFY", "yes, go for HDFCBANK"):
+            ok, why = ticket.parse_yes(r, rel(), ["RELIANCE"])
+            self.assertFalse(ok, r)
+        self.assertIn("tcs", ticket.parse_yes("yes tcs", rel(), ["RELIANCE"])[1].lower())
+
+    def test_a_yes_for_the_other_side(self):
+        self.assertFalse(self.yes("yes sell it"))                                # this order is a buy
+        self.assertTrue(self.yes("yes sell 73", order=rel(side="sell")))
+
+    def test_a_yes_naming_its_own_fno_contract(self):
+        opt = {"symbol": "NIFTY26NOV24000CE", "exchange": "NFO", "side": "buy", "qty": "65", "type": "limit",
+               "limit_price": "120.50", "time_in_force": "day"}
+        for r in ("yes NIFTY26NOV24000CE", "yes 65 NIFTY26NOV24000CE at 120.50", "yes buy nifty26nov24000ce"):
+            self.assertTrue(ticket.parse_yes(r, opt, ["NIFTY26NOV24000CE"])[0], r)
+        self.assertFalse(ticket.parse_yes("yes NIFTY26NOV24100CE", opt, ["NIFTY26NOV24000CE"])[0])
+
 
 class TicketShape(unittest.TestCase):
     def test_the_order_fields_leave_out_why_and_plan(self):
@@ -103,7 +126,9 @@ class KiteKeyFile(unittest.TestCase):
         note, env = self.example()
         for k in ("KITE_API_KEY", "KITE_API_SECRET"):
             self.assertIn("NEVER_IN_CHAT", env[k])
-        self.assertEqual(env["EXCLUDED_TOOLS"], "place_order,modify_order,cancel_order")
+        self.assertEqual(set(env["EXCLUDED_TOOLS"].split(",")),   # GTT orders are orders too
+                         {"place_order", "modify_order", "cancel_order", "place_gtt_order", "modify_gtt_order",
+                          "delete_gtt_order"})
         for words in ("self-hosted", "static IP", "Needs approval", "APP_MODE=http",
                       "http://127.0.0.1:8080/callback", "never stdio"):
             self.assertIn(words, note)
@@ -170,6 +195,41 @@ class Futures(unittest.TestCase):
         r = check.check([o], {"budget": 200000, "allow_fno": True}, now=check.parse_now("2026-10-21 15:15"),
                         portfolio={"cash": 50000, "positions": [{"ticker": EX.FUT_CONTRACT, "shares": 65}]})
         self.assertEqual(r["results"][0]["verdict"], "PASS", r["results"][0])
+
+    def flatten(self, *extra):
+        return run(["flatten", "--orders", self.orders, "--portfolio", self.pf, "--plan", os.path.join(self.d, "no"),
+                    "--config", os.path.join(self.d, "no"), "--now", "2026-11-04 15:15"] + list(extra))
+
+    def risk_on_the_exit(self, sym, qty):
+        with open(self.orders) as fh:
+            o = json.load(fh)["orders"][0]
+        r = check.check([o], {"budget": 200000, "allow_fno": True}, now=check.parse_now("2026-11-04 15:15"),
+                        portfolio={"cash": 50000, "positions": [{"ticker": sym, "shares": qty}]})
+        return o, r["results"][0]
+
+    def test_flatten_a_futures_name_with_digits(self):
+        # bharat-risk reads NIFTYNXT50 and 360ONE futures (digits in the name): the flatten ticket must go to NFO
+        for sym, qty in (("NIFTYNXT5026NOVFUT", "25"), ("360ONE26NOVFUT", "500")):
+            code, _, err = self.flatten("--symbol", sym, "--qty", qty)
+            self.assertEqual(code, 0, err)
+            o, res = self.risk_on_the_exit(sym, float(qty))
+            self.assertEqual((o["exchange"], o.get("instrument")), ("NFO", "fut"), sym)
+            self.assertEqual((res["verdict"], res["kind"]), ("PASS", "exit"), res)
+
+    def test_paper_fill_of_a_futures_name_with_digits_pays_only_the_charges(self):
+        pf = ticket.apply_fill(self.pf, {"budget": 200000}, "360ONE26NOVFUT", "buy", 500, 1200.0, "2026-11-04")
+        self.assertEqual(pf["cash"], round(200000 - india.leg_costs("fut", "buy", 500, 1200.0)["total"], 2))
+
+    def test_flatten_an_option_name_with_digits_goes_to_nfo_at_a_limit(self):
+        code, _, err = self.flatten("--symbol", "360ONE26NOV1200CE", "--qty", "500")
+        self.assertEqual(code, 1)
+        self.assertIn("--limit PRICE", err)
+        code, _, err = self.flatten("--symbol", "360ONE26NOV1200CE", "--qty", "500", "--limit", "12.30")
+        self.assertEqual(code, 0, err)
+        o, res = self.risk_on_the_exit("360ONE26NOV1200CE", 500.0)
+        self.assertEqual((o["exchange"], o.get("instrument"), o["type"], o["limit_price"]),
+                         ("NFO", "opt", "limit", "12.30"))
+        self.assertEqual((res["verdict"], res["kind"]), ("PASS", "exit"), res)
 
 
 class Flow(unittest.TestCase):

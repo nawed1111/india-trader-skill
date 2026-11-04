@@ -462,6 +462,18 @@ def atr_of(bars, n=ATR_BARS):
 
 # ---------------------------------------------------------------- plan
 
+def write_json(path, doc):
+    """Write to a temp file and swap it in: a write cut short leaves the old file, never half of one."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
 def read_json(path, what):
     if not path or not os.path.exists(path):
         raise PlanError("no %s at %s" % (what, path))
@@ -778,12 +790,7 @@ def cmd_plan(a):
     now = parse_now(a.now)
     plan, warnings = build_plan(a, now)
     if a.write:
-        d = os.path.dirname(a.write)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        with open(a.write, "w", encoding="utf-8") as fh:
-            json.dump(plan, fh, indent=2)
-            fh.write("\n")
+        write_json(a.write, plan)
     if a.json:
         print(json.dumps(dict(plan, warnings=warnings), indent=2))
         return 0

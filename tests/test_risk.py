@@ -134,6 +134,17 @@ class DayTradeChecks(unittest.TestCase):
         self.assertEqual((r["entry_ref"], r["entry_ref_from"]), (1229.0, "price"))
         self.assertTrue(any(x.startswith("reward:risk") for x in r["reasons"]))
 
+    def test_a_short_is_measured_from_the_lower_price(self):
+        # a short's stop is above it: a market sell at a lower fresh price is the bigger loss
+        times = {"ABC": at(NOW) - datetime.timedelta(minutes=1)}
+        short = bracket("ABC", 150, 100.0, 105.0, 90.0, side="sell")
+        r = one([short], cfg(allow_short=True), prices={"ABC": 98.0}, price_times=times)["results"][0]
+        self.assertEqual((r["entry_ref"], r["entry_ref_from"], r["risk_per_share"]), (98.0, "price", 7.0))
+        self.assertEqual(r["verdict"], "BLOCK")                     # 150 x 7 = 1,050 + costs, over the 1,000 cap
+        self.assertTrue(any(x.startswith("loss:") for x in r["reasons"]), r["reasons"])
+        r = one([short], cfg(allow_short=True), prices={"ABC": 102.0}, price_times=times)["results"][0]
+        self.assertEqual((r["entry_ref"], r["entry_ref_from"], r["risk_per_share"]), (100.0, "plan", 5.0))
+
     def test_a_stale_price_is_not_used(self):
         times = {"RELIANCE": at(NOW) - datetime.timedelta(minutes=40)}
         r = one([rel()], prices={"RELIANCE": 1229.0}, price_times=times)["results"][0]
