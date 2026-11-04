@@ -285,8 +285,8 @@ def _read(path, default):
 
 # ---------------------------------------------------------------- rules
 
-PRICE_TYPES = {"above", "below", "stop", "target", "pct_move", "opening_bell", "time"}
-NO_QUOTE = {"opening_bell", "time"}
+PRICE_TYPES = {"above", "below", "stop", "target", "pct_move", "opening_bell", "time", "expiry"}
+NO_QUOTE = {"opening_bell", "time", "expiry"}
 
 
 def _hhmm(text):
@@ -308,6 +308,12 @@ def validate(rule):
         raise AlertError("rule %s needs a numeric pct" % rule.get("id"))
     if t == "time" and _hhmm(rule.get("at")) is None:
         raise AlertError("rule %s needs \"at\" as an IST time like \"15:15\"" % rule.get("id"))
+    if t == "expiry":
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(rule.get("expiry") or "")):
+            raise AlertError("rule %s needs \"expiry\" as YYYY-MM-DD (the contract's expiry from the bhavcopy)"
+                             % rule.get("id"))
+        if rule.get("at") is not None and _hhmm(rule["at"]) is None:
+            raise AlertError("rule %s: \"at\" must be an IST time like \"09:15\"" % rule.get("id"))
     if rule.get("date") and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(rule["date"])):
         raise AlertError("rule %s: date must be YYYY-MM-DD" % rule.get("id"))
 
@@ -369,6 +375,20 @@ def evaluate(rules, quotes, status, state, now_utc):
                 rings.append({"id": rid, "symbol": sym, "message": msg})
                 rung[rid] = stamp
             continue
+        if typ == "expiry":
+            exp = datetime.date.fromisoformat(r["expiry"])
+            day = datetime.date.fromisoformat(today)
+            at = _hhmm(r.get("at") or "09:15")
+            when = "today" if day == exp else ("on the next trading day, %s" % exp.isoformat()
+                                               if india.prev_trading_day(exp) == day else None)
+            if when and status.get("opens") and local.time() >= at and not _rang_today(rung.get(rid), today):
+                sym = r["symbol"].upper()
+                msg = "%s expires %s. " % (sym, when)
+                msg += ("No new entry in it today; an open position must be closed or rolled to the next month."
+                        if day == exp else "Plan new entries in the next month's contract (it rolls over).")
+                rings.append({"id": rid, "symbol": sym, "message": msg})
+                rung[rid] = stamp
+            continue
         sym = r["symbol"].upper()
         q = quotes.get(sym)
         if not q:
@@ -410,14 +430,22 @@ def rules_from_plan(plan, cfg_flat_by=None):
     if not isinstance(plan, dict) or not plan.get("symbol"):
         raise AlertError("the plan has no symbol (run bharat-exit first)")
     sym = str(plan["symbol"]).upper()
+    fut = plan.get("instrument") == "fut"
     out = []
     for key, typ, word in (("stop", "stop", "plan stop"), ("target", "target", "plan target")):
         v = plan.get(key)
         if not isinstance(v, (int, float)) or v <= 0:
             raise AlertError("the plan has no %s (run bharat-exit)" % key)
         label = plan.get("%s_label" % key)
+        note = word + (": " + label if label else "")
+        if fut:  # the quotes are the index's: watch the index level that matches the futures level
+            ix = (plan.get("index") or {}).get(key)
+            if not isinstance(ix, (int, float)):
+                raise AlertError("the futures plan has no index %s (re-run bharat-exit)" % key)
+            note += " (index level; %s %.2f)" % (plan.get("contract"), v)
+            v = ix
         out.append({"id": "%s-plan-%s" % (sym.lower(), key), "symbol": sym, "type": typ, "price": float(v),
-                    "note": word + (": " + label if label else "")})
+                    "note": note})
     flat = plan.get("flat_by") or cfg_flat_by or "15:15"
     if _hhmm(flat) is None:
         raise AlertError("the plan's flat_by %r is not a time like 15:15" % flat)
@@ -426,6 +454,9 @@ def rules_from_plan(plan, cfg_flat_by=None):
     if plan.get("date"):
         for r in out:
             r["date"] = str(plan["date"])
+    if fut and plan.get("contract") and plan.get("expiry"):
+        out.append({"id": "%s-expiry" % str(plan["contract"]).lower(), "symbol": str(plan["contract"]).upper(),
+                    "type": "expiry", "expiry": str(plan["expiry"]), "at": "09:15"})
     return out
 
 

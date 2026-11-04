@@ -164,6 +164,42 @@ class Rules(unittest.TestCase):
                 al.validate(bad)
 
 
+NOV = {"id": "nifty26novfut-expiry", "type": "expiry", "symbol": "NIFTY26NOVFUT", "expiry": "2026-11-23"}
+
+
+class Expiry(unittest.TestCase):
+    def ev(self, rules, now, state=None):
+        return al.evaluate(rules, {}, status(now), state or {}, al.parse_now(now))
+
+    def test_rings_the_day_before_and_on_expiry_day(self):
+        rings, st = self.ev([NOV], "2026-11-20 09:20")       # Friday: the next trading day is the 23rd
+        self.assertEqual([r["id"] for r in rings], ["nifty26novfut-expiry"])
+        self.assertIn("expires on the next trading day", rings[0]["message"])
+        self.assertEqual(self.ev([NOV], "2026-11-20 11:00", st)[0], [])   # once a day
+        rings, _ = self.ev([NOV], "2026-11-23 09:15", st)
+        self.assertIn("NIFTY26NOVFUT expires today", rings[0]["message"])
+        self.assertEqual(self.ev([NOV], "2026-11-24 09:30")[0], [])        # holiday, and past the expiry
+        self.assertEqual(self.ev([NOV], "2026-11-19 09:30")[0], [])
+        self.assertEqual(self.ev([NOV], "2026-11-20 09:10")[0], [])        # before 09:15
+
+    def test_from_plan_adds_it_for_a_futures_plan(self):
+        plan = {"symbol": "NIFTY", "date": "2026-10-21", "instrument": "fut", "contract": "NIFTY26OCTFUT",
+                "expiry": "2026-10-27", "entry": 23121.95, "stop": 23040.30, "target": 23203.60,
+                "index": {"entry": 23115.65, "stop": 23034.05, "target": 23197.25}, "flat_by": "15:15"}
+        rules = {r["id"]: r for r in al.rules_from_plan(plan)}
+        e = rules["nifty26octfut-expiry"]
+        self.assertEqual((e["type"], e["symbol"], e["expiry"], e.get("date")), ("expiry", "NIFTY26OCTFUT",
+                                                                                 "2026-10-27", None))
+        # the quotes are the index's, so the price alerts sit on the index levels
+        self.assertEqual((rules["nifty-plan-stop"]["price"], rules["nifty-plan-target"]["price"]),
+                         (23034.05, 23197.25))
+        self.assertIn("NIFTY26OCTFUT 23040.30", rules["nifty-plan-stop"]["note"])
+
+    def test_bad_expiry_rule(self):
+        with self.assertRaises(al.AlertError):
+            al.validate({"id": "x", "type": "expiry", "symbol": "NIFTY26NOVFUT", "expiry": "23 Nov"})
+
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
