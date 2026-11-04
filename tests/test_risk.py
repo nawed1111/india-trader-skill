@@ -258,6 +258,11 @@ class Futures(unittest.TestCase):
         self.assertIn("costs Rs 894.53 at the stop", info)
         self.assertIn("margin Rs 1,75,953 for 1 lot", info)
 
+    def test_a_future_off_nfo_blocks(self):
+        r = one([fut_order(exchange="NSE")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("goes on NFO", " ".join(r["reasons"]))
+
     def test_fno_off_blocks(self):
         r = one([fut_order()], fut_cfg(allow_fno=False), now=FUT_NOW)["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
@@ -463,6 +468,31 @@ class Options(unittest.TestCase):
                 "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
         r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
         self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
+
+    def exit_sell(self, **over):
+        pf = {"cash": 200000, "positions": [{"ticker": EX.OPT_CONTRACT, "shares": 65, "lots": []}]}
+        sell = {"symbol": EX.OPT_CONTRACT, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65",
+                "type": "limit", "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+        sell.update(over)
+        return one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+
+    def test_closing_an_option_at_market_blocks(self):
+        r = self.exit_sell(type="market", limit_price=None)
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
+        self.assertIn("flatten --symbol", " ".join(r["reasons"]))
+        self.assertIn("--limit", " ".join(r["reasons"]))
+
+    def test_an_option_off_nfo_blocks(self):
+        r = one([opt_order(exchange="NSE")], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("NFO", " ".join(r["reasons"]))
+        o = opt_order()
+        del o["exchange"]
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("no exchange", " ".join(r["reasons"]))
+        r = self.exit_sell(exchange="NSE")
+        self.assertEqual((r["kind"], r["verdict"]), ("exit", "BLOCK"), r)
 
     def test_a_market_order_blocks(self):
         o = opt_order(type="market")

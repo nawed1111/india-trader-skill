@@ -16,7 +16,9 @@ a limit together are caught.
 Entries and exits. An ENTRY opens or adds to a position (a buy, or a sell
 that would go short). An EXIT only reduces what you hold. Getting out must
 always be possible: an exit is checked for format, asset and short sales
-only; every other rule turns into a warning for it.
+only; every other rule turns into a warning for it. An F&O order must be on
+NFO, and an option is closed at a limit, never market: both are format
+rules, and a limit sell still gets you out.
 
 What blocks an order (every order):
 
@@ -405,6 +407,13 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             warns.append("advanced order (%s): check every leg before you say yes"
                          % (oc or "advanced_instructions"))
 
+        exch = str(o.get("exchange") or "").strip().upper()
+        if (fut or opt) and exch != "NFO":
+            reasons.append("format: %s is an F&O contract and goes on NFO, not %s" % (sym, exch or "no exchange"))
+        if opt and typ == "market":   # format, so an exit blocks too: a limit sell still gets you out
+            reasons.append("format: an option is bought and sold at a limit, never market (a market order can fill "
+                           "far from its value); to close it: ticket.py flatten --symbol %s --limit PRICE" % sym)
+
         # asset
         if unknown_nfo:   # fail closed: an F&O order this pack cannot classify skips no checks by default
             reasons.append("asset: %s on NFO is not a contract name this pack knows (like NIFTY26OCTFUT or "
@@ -495,7 +504,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if side == "sell":
                 reasons.append("short: option selling is not part of this pack (a written option's loss has no cap); "
                                "it only buys calls and puts. If you hold this option, record the fill first")
-            if typ != "limit":
+            if typ not in ("limit", "market"):   # market is a format block above
                 later.append("entry: an option entry is a limit order at the premium; a market order on an option "
                              "can fill far from its fair value")
             if o.get("stop_loss_stop_price") is not None and o.get("stop_loss_limit_price") is None:

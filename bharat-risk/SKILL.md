@@ -188,6 +188,10 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 - **short** any sell that opens or adds to a short option blocks, whatever
   the config says: option selling is not part of this pack. Selling an
   option you hold is an exit.
+- **format** an F&O order not on `exchange: NFO` blocks, and so does a
+  market order on an option, entry or exit: an option is closed at a limit
+  too (`ticket.py flatten --symbol C --limit PRICE`). This is a format
+  rule, and a limit sell still gets you out.
 - **entry** anything but a limit order blocks, and so does a stop leg
   without `stop_loss_limit_price` (NSE takes no SL-M on options). An NFO
   name the pack cannot read as a future or an option, with no
@@ -205,7 +209,8 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
 ## What it never does
 
 It never places an order, never edits an order to make it pass, never
-loosens a limit, never blocks a sell that only gets the user out, and never
+loosens a limit, never blocks a sell that only gets the user out (an option's close must be
+a limit order, which still gets them out), and never
 treats a PASS as the user's yes.
 
 ## Safety
