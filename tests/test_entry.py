@@ -659,6 +659,21 @@ class FuturesDeferred(unittest.TestCase):
             self.assertEqual(f["contract"], "NIFTY27JANFUT", day)
             self.assertNotIn("rolls over", " ".join(f["warnings"]), day)
 
+    def test_no_known_last_session_flags_the_bhavcopy_as_maybe_old(self):
+        # from Feb 2027 (no 2027 holiday list) there is no known last session: a --bhavcopy FILE may be any age
+        with open(BHAV19, "rb") as fh:
+            rows = entry.india.parse_bhavcopy(fh.read())
+        day, at = datetime.date(2026, 10, 21), datetime.datetime(2026, 10, 21, 9, 35, tzinfo=entry.india.IST)
+        saved, entry.india.prev_trading_day = entry.india.prev_trading_day, lambda d: None
+        try:
+            f = entry.future_leg(rows, "NIFTY", day, 23000.0)
+            o = entry.option_leg(rows, "NIFTY", day, 23000.0, at, "CE")
+        finally:
+            entry.india.prev_trading_day = saved
+        self.assertTrue(f["estimated"])
+        self.assertTrue([w for w in f["warnings"] if "last session" in w and "unknown" in w], f["warnings"])
+        self.assertTrue([w for w in o["warnings"] if "last session" in w and "unknown" in w], o["warnings"])
+
 
 
 class Options(unittest.TestCase):
@@ -729,6 +744,13 @@ class Options(unittest.TestCase):
         self.assertEqual(entry.bar_line(bar["12:00"], res),
                          "12:00 bar  closed Rs 22954.25  TRIGGERED: closed below Rs 22970.85 (-0.07%). Get in now "
                          "if you take it: 12:05 PM, Rs 22954.25")
+
+    def test_a_put_on_a_level_says_close_below_in_the_header(self):
+        ch = entry.get_chart("NIFTY", "5m", datetime.date(2026, 10, 19), NSEI, datetime.date(2026, 10, 19))
+        res = entry.evaluate(ch, entry.parse_now("2026-10-19 12:05"), setup="level", level=22970.85, below=True)
+        head = entry.describe(res)[0]
+        self.assertIn("close below Rs 22970.85", head)
+        self.assertNotIn("above", head)
 
     def test_an_illiquid_strike_warns(self):
         with open("cfg.json", "w") as fh:

@@ -113,6 +113,14 @@ def load_bhavcopy(path, day):
         raise EntryError("could not get the F&O bhavcopy for %s (%s): save it and pass --bhavcopy FILE" % (last, e))
 
 
+def last_session_words(last, day):
+    """Why a bhavcopy may be old: older than the last session, or no last session is known."""
+    if last is not None:
+        return "older than the last session (%s)" % last
+    return ("and the last session before %s is unknown (NSE's %d holiday list is not in india.py yet), so it may "
+            "be older" % (day, day.year))
+
+
 def future_leg(rows, symbol, day, index_price, fut_price=None):
     """The futures contract for a signal on the index: contract, lot, basis and price.
     price = index price x (futures close / index close) from the bhavcopy, tick-rounded;
@@ -122,16 +130,16 @@ def future_leg(rows, symbol, day, index_price, fut_price=None):
         raise EntryError("no %s future after %s in the bhavcopy" % (symbol, day))
     ratio = india.basis_ratio(f)
     last = india.prev_trading_day(day)
-    stale = last is not None and f["date"] < last
+    stale = last is None or f["date"] < last   # no known last session: the basis may be any age
     warnings = []
     if fut_price is not None:
         price, source = round(float(fut_price), 2), "user"
     else:
         price, source = (india.tick_round(index_price * ratio) if index_price else None), "bhavcopy"
         if stale:
-            warnings.append("The basis is from %s, older than the last session (%s): the futures price is "
-                            "estimated from %s. Read the live price off Kite and pass --fut-price." % (
-                                f["date"], last, f["date"]))
+            warnings.append("The basis is from %s, %s: the futures price is estimated from %s. Read the live "
+                            "price off Kite and pass --fut-price." % (f["date"], last_session_words(last, day),
+                                                                       f["date"]))
     if india._trading_days_between(day, f["expiry"]) == 1:
         nxt = india.front_future(rows, symbol, day, roll_days=1)
         warnings.append("%s expires on the next trading day (%s): it rolls over. A new entry should be in %s." % (
@@ -216,8 +224,8 @@ def option_leg(rows, symbol, day, index_price, at_ist, right, steps_otm=0, expir
     if row["volume"] == 0:
         warnings.append("%s had no trades in the %s bhavcopy: an illiquid strike" % (row["contract"], row["date"]))
     last = india.prev_trading_day(day)
-    if last is not None and row["date"] < last:
-        warnings.append("The bhavcopy is from %s, older than the last session (%s)." % (row["date"], last))
+    if last is None or row["date"] < last:
+        warnings.append("The bhavcopy is from %s, %s." % (row["date"], last_session_words(last, day)))
     return {"contract": row["contract"], "expiry": expiry.isoformat(), "strike": strike, "right": right,
             "lot": row["lot"], "premium": price, "premium_source": source, "iv": round(iv, 6), "oi": row["oi"],
             "volume": row["volume"], "illiquid": illiquid, "years": years, "forward_ratio": ratio, "rate": rate,
@@ -715,7 +723,8 @@ SHORT = {"pre-open": "not open", "forming": "forming", "closed": "closed"}
 def setup_name(res):
     if res["setup"] == "orb":
         return "opening-range breakout (%d-minute range)" % res["or_minutes"]
-    return "close above Rs %.2f" % res["level"] if res["level"] is not None else "close above a level"
+    side = "below" if res.get("index_side") == "down" else "above"   # a bought put waits for a close below it
+    return "close %s Rs %.2f" % (side, res["level"]) if res["level"] is not None else "close %s a level" % side
 
 
 def describe(res):
