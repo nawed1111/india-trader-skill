@@ -71,6 +71,8 @@ class SetupScript(unittest.TestCase):
         self.assertEqual(kite["env"]["KITE_API_KEY"], "PASTE_KEY_LATER")
         self.assertEqual(kite["env"]["KITE_API_SECRET"], "PASTE_SECRET_LATER")
         self.assertEqual(kite["env"]["EXCLUDED_TOOLS"], "place_order,modify_order,cancel_order")
+        # Claude Code keeps its own server list: the script says how to copy kite across, once the keys are in
+        self.assertIn("claude mcp add-from-claude-desktop", r.stdout)
 
     def test_a_second_run_keeps_your_keys_and_other_servers_and_backs_up(self):
         os.makedirs(os.path.dirname(self.cfg))
@@ -106,7 +108,9 @@ class SetupScript(unittest.TestCase):
     def test_the_readme_and_broker_skill_point_at_it(self):
         for path in ("README.md", os.path.join("bharat-broker", "SKILL.md")):
             with open(os.path.join(ROOT, path), encoding="utf-8") as fh:
-                self.assertIn("tools/setup-trader.sh", fh.read(), path)
+                text = fh.read()
+            self.assertIn("tools/setup-trader.sh", text, path)
+            self.assertIn("claude mcp add-from-claude-desktop", text, path)
 
 
 if __name__ == "__main__":
