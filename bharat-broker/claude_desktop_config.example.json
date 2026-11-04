@@ -1,12 +1,12 @@
 {
-  "_note": "Live trading only. A self-hosted zerodha/kite-mcp-server (github.com/zerodha/kite-mcp-server): the hosted mcp.kite.trade leaves out order tools. Check that project's README for the exact command and settings. Your Kite Connect key and secret go here, typed by you, never in the chat. Orders only work from the static IP you registered in Kite (SEBI rule since 1 Apr 2026). Set place_order and cancel_order to Needs approval in Claude, never Always allow.",
+  "_note": "Live trading only. Do not fill in this file: it is tracked by git, and a key typed here ships with the next commit. Copy the kite block into Claude's own config file, outside any repo (macOS: ~/Library/Application Support/Claude/claude_desktop_config.json; Windows: %APPDATA%\\Claude\\claude_desktop_config.json), and type your Kite Connect key and secret there, never in the chat. A self-hosted zerodha/kite-mcp-server (github.com/zerodha/kite-mcp-server): the hosted mcp.kite.trade leaves out order tools. Check that project's README for the exact command and settings. Orders only work from the static IP you registered in Kite (SEBI rule since 1 Apr 2026). Set place_order and cancel_order to Needs approval in Claude, never Always allow.",
   "mcpServers": {
     "kite": {
       "command": "/path/to/kite-mcp-server",
       "env": {
         "APP_MODE": "stdio",
-        "KITE_API_KEY": "YOUR_KITE_CONNECT_API_KEY_TYPED_HERE_NEVER_IN_CHAT",
-        "KITE_API_SECRET": "YOUR_KITE_CONNECT_API_SECRET_TYPED_HERE_NEVER_IN_CHAT"
+        "KITE_API_KEY": "IN_CLAUDES_OWN_CONFIG_NOT_HERE_NEVER_IN_CHAT",
+        "KITE_API_SECRET": "IN_CLAUDES_OWN_CONFIG_NOT_HERE_NEVER_IN_CHAT"
       }
     }
   }
