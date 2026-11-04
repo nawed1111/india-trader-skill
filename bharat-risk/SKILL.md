@@ -207,8 +207,10 @@ For an option order (`instrument: opt`, or a `...CE`/`...PE` name), with
   gives the month only, so the order's expiry must be in that month.
 - **freeze** an F&O order over NSE's per-order limit (NIFTY 1,800 units,
   BANKNIFTY 900) blocks, exits too: send it as several tickets.
-- **costs** use Zerodha's option charges; the cost-share check catches a
-  cheap option (Rs 40 of brokerage alone on a Rs 195 position).
+- **costs** use Zerodha's option charges. Round-trip costs over
+  `max_option_cost_share` (default 0.10) of the premium paid block, whatever
+  the target: 1 lot of a Rs 3 option pays about Rs 47 on Rs 195 (24 %);
+  5 lots pay Rs 49 on Rs 975 (5 %).
 - **lots** more than `max_lots`; `max_premium_inr` caps the premium.
 
 ## What it never does

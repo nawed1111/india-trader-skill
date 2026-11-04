@@ -84,7 +84,7 @@ DEFAULTS = {
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:15", "mis_leverage": 1,
     "paper": True, "blocked": [], "allow_fno": False, "allow_margin": False, "allow_short": False,
     "margin_per_lot_inr": {}, "max_lots": 1, "max_premium_inr": None, "min_option_oi": 50000,
-    "expiry_day_cutoff": "13:00",
+    "expiry_day_cutoff": "13:00", "max_option_cost_share": 0.10,
 }
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 FUT_NAME = re.compile(r"^([A-Z&\-]+)(\d{2})([A-Z]{3})FUT$")
@@ -655,6 +655,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                         later.append("loss: %s shares x %s risk a share + %s costs = %s at the stop, over your %s "
                                      "max loss per trade" % (_num(shares), _p(risk_ps), money(cost_stop),
                                                              money(max_loss), money(cap)))
+                    opt_share = _f(c.get("max_option_cost_share"))
+                    if opt and opt_share:   # against the premium paid, which no target can change
+                        paid = shares * ref
+                        cost_in = costs(shares, ref, ref, seg)
+                        if paid > 0 and cost_in > opt_share * paid + CENT:
+                            later.append("costs: %s round-trip costs are %.0f%% of the %s premium paid, over your "
+                                         "%.0f%% max_option_cost_share: the flat Rs 20 an order eats a cheap option; "
+                                         "buy more lots or a dearer strike" % (money(cost_in), 100.0 * cost_in / paid,
+                                                                               money(paid), 100.0 * opt_share))
                     min_rr = _f(c.get("min_reward_risk"))
                     if target:
                         if (long and target <= ref + CENT) or (not long and target >= ref - CENT):

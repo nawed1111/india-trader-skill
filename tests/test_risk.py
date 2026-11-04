@@ -561,6 +561,21 @@ class Options(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("costs:", " ".join(r["reasons"]))
 
+    def test_a_cheap_option_blocks_whatever_the_target(self):
+        o = opt_order(limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(), now=FUT_NOW)["results"][0]
+        self.assertEqual(r["verdict"], "BLOCK")
+        why = " ".join(r["reasons"])
+        self.assertIn("max_option_cost_share", why)
+        self.assertIn("Rs 195", why)
+
+    def test_enough_cheap_lots_pass_the_premium_cost_check(self):
+        o = opt_order(qty="325", limit_price="3.00", stop_loss_stop_price="2.00", take_profit_limit_price="6.00",
+                      plan={"entry": 3.0, "stop": 2.0, "target": 6.0})
+        r = one([o], fut_cfg(max_lots=5), now=FUT_NOW)["results"][0]
+        self.assertNotIn("max_option_cost_share", " ".join(r["reasons"]), r)
+
     def test_option_fields_are_in_the_fingerprint(self):
         o = opt_order()
         for k, v in (("right", "PE"), ("strike", 23200.0), ("premium_source", "estimated"), ("oi", 1)):
