@@ -54,6 +54,46 @@ Every skill folder works on its own: each carries its own copy of `india.py`
 copy the same folders into your repo's `.claude/skills/`. The tools need
 Python 3.8 or newer. Nothing to pip install, no API keys for the data.
 
+### Live trading setup (Zerodha)
+
+Paper trading needs none of this. For live orders through Kite, one script
+sets everything up in a folder of your choice, an external SSD included
+(macOS or Linux; it needs git, Go 1.21+ and Python 3):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nawed1111/india-trader-skill/main/tools/setup-trader.sh -o setup-trader.sh
+```
+
+```bash
+bash setup-trader.sh /Volumes/MySSD/trader
+```
+
+Use your own folder (`ls /Volumes` shows an SSD's name). `tools/setup-trader.sh`
+makes the folder, clones and builds Zerodha's own
+[kite-mcp-server](https://github.com/zerodha/kite-mcp-server), installs the
+eleven skills for that folder, writes a paper-trading `trader/config.json`,
+and adds a `kite` server to Claude Desktop's config with placeholder keys and
+the order tools switched off. Run it again any time: it keeps your keys and
+your other servers, and backs up Claude's config first. Then:
+
+1. **Keys.** Make a Kite Connect app at developers.kite.trade. Type its key
+   and secret over `PASTE_KEY_LATER` and `PASTE_SECRET_LATER` in Claude's own
+   config file (macOS `~/Library/Application Support/Claude/claude_desktop_config.json`,
+   Windows `%APPDATA%\Claude\claude_desktop_config.json`), never in this
+   repo and never in a chat. Quit Claude Desktop and reopen it.
+2. **Read-only first.** Ask Claude for your Kite profile, margins and
+   positions. With `EXCLUDED_TOOLS` in the config, Claude cannot place,
+   change or cancel an order.
+3. **Live, when you decide.** Register your static IP in Kite (Profile, IP
+   whitelist), set `"static_ip_registered": true` and `"paper": false` in
+   `trader/config.json`, delete the `EXCLUDED_TOOLS` line, restart Claude,
+   and set `place_order`, `modify_order` and `cancel_order` to **Needs
+   approval**. Start with the smallest trade you can.
+
+On Windows, or to do it by hand: build the server per its README and copy
+the `kite` block from `bharat-broker/claude_desktop_config.example.json` into
+Claude's config. `/bharat-broker` walks through the details.
+
 ## The eleven
 
 | command | job | what it does |

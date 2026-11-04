@@ -97,7 +97,10 @@ Going live is the user's own decision. Claude never sets `"paper": false`.
    into Claude's own config file, outside any repo (macOS:
    `~/Library/Application Support/Claude/claude_desktop_config.json`;
    Windows: `%APPDATA%\Claude\claude_desktop_config.json`), and types the
-   key and secret there. Never ask for
+   key and secret there. On macOS or Linux, `tools/setup-trader.sh` in the
+   repo does the clone, the build and this config in one go
+   (`bash setup-trader.sh /Volumes/MySSD/trader`), with placeholder keys
+   and the order tools off (`EXCLUDED_TOOLS`) until the user removes them. Never ask for
    them, never read that file back into the conversation, and if the user
    pastes a key anyway, tell them to delete the message and regenerate it.
 4. **Tool permissions.** Customize > Connectors, open kite: `place_order`,
