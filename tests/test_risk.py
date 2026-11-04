@@ -512,6 +512,17 @@ class Options(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertTrue(self.asset_reason(r, sym), r["reasons"])
 
+    def test_a_real_contract_with_digits_in_its_underlying_is_not_unreadable(self):
+        # 360ONE and NIFTYNXT50 are real NSE contracts the name parser cannot split; they must not block as unreadable
+        for sym in ("360ONE26NOV1200CE", "NIFTYNXT5026NOV60000CE"):
+            r = one([opt_order(symbol=sym)], fut_cfg(), now=FUT_NOW)["results"][0]
+            self.assertFalse(self.asset_reason(r, sym), r["reasons"])
+            pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}
+            sell = {"symbol": sym, "exchange": "NFO", "product": "MIS", "side": "sell", "qty": "65", "type": "limit",
+                    "limit_price": "150.00", "time_in_force": "day", "instrument": "opt", "lot": 65}
+            r = one([sell], fut_cfg(), now=FUT_NOW, portfolio=pf)["results"][0]
+            self.assertEqual((r["kind"], r["verdict"]), ("exit", "PASS"), r)
+
     def test_a_bad_name_blocks_an_exit_too(self):
         sym = "NIFTY26XYZ23100CE"
         pf = {"cash": 200000, "positions": [{"ticker": sym, "shares": 65, "lots": []}]}

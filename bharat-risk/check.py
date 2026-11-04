@@ -355,8 +355,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         fut = fno and not opt
         fut_name = FUT_NAME.match(sym)
         known = name is not None or bool(fut_name and fut_name.group(3) in india.MONTHS)
-        unknown_nfo = not known and (bool(FNO.match(sym)) or o.get("instrument") == "opt"
-                                     or (fno and not o.get("instrument")))
+        # F&O-shaped but unreadable (a bad month code, a weekly dated 31 Nov), or on NFO with nothing to classify it.
+        # Not "instrument: opt" alone: real contracts like 360ONE26NOV1200CE have digits the parser cannot split.
+        unknown_nfo = not known and (bool(FNO.match(sym)) or (fno and not o.get("instrument")))
         seg = "opt" if opt else "fut" if fut else "eq_intraday"
         lot = int(_f(o.get("lot")) or 0) if fno else 0
         lots = None
