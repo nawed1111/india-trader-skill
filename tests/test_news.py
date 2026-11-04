@@ -121,6 +121,16 @@ class Check(unittest.TestCase):
         self.assertNotIn("2026-10-21", out)          # filed after the pinned clock
         self.assertIn("Checked 2026-10-19 09:30 IST", out)
 
+    def test_an_unreadable_state_file_starts_fresh(self):
+        os.makedirs(os.path.dirname(self.state))
+        with open(self.state, "w") as fh:
+            fh.write('{"seen": {"abc": "2026-11-0')            # cut short
+        code, out, err = run(["--tickers", "RELIANCE", "--hours", "168", "--no-moves"] + self.base)
+        self.assertEqual(code, 0, err)
+        self.assertIn("starting fresh", out)
+        with open(self.state) as fh:
+            self.assertTrue(json.load(fh)["seen"])               # written again, whole
+
     def test_a_now_without_a_zone_is_ist(self):
         # as in every other bharat-* tool: 9:30 with no offset is 9:30 IST, 04:00 UTC
         code, out, err = run(["--tickers", "RELIANCE", "--hours", "48", "--no-moves", "--json",

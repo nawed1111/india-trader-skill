@@ -113,6 +113,27 @@ def load_json(path):
     return None
 
 
+def load_state(path):
+    """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
+    try:
+        return load_json(path) or {}, None
+    except ValueError as exc:
+        return {}, ("the state file %s could not be read (%s): starting fresh, so items you have seen may show "
+                    "again" % (path, exc))
+
+
+def save_state(path, state):
+    """Write to a temp file and swap it in: a write cut short leaves the old state, never half of one."""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
 def watch_from_files(portfolio="trader/portfolio.json", watchlist="trader/watchlist.json",
                      plan="trader/plan.json"):
     """{ticker: name or None}: the scanner's hits, the planned trade and your holdings."""
@@ -463,8 +484,8 @@ def main(argv=None):
     except NewsError as exc:
         print("news: %s" % exc, file=sys.stderr)
         return 2
-    state = load_json(args.state) or {}
-    errors = []
+    state, note = load_state(args.state)
+    errors = [note] if note else []
     fetcher = Fetcher(offline=args.offline)
     items = collect(fetcher, watch, state, nse=not args.no_nse, errors=errors)
     items = dedupe(tag(items, watch))
@@ -479,12 +500,7 @@ def main(argv=None):
         sys.stdout.write(render(shown, errors, now, moves, args.move_pct))
     if not args.dry_run:
         remember(items, state, now)
-        folder = os.path.dirname(args.state)
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        with open(args.state, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-            fh.write("\n")
+        save_state(args.state, state)
     return 0 if any(i["new"] for i in shown) else 1
 
 
