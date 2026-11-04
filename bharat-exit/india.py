@@ -13,6 +13,8 @@ import csv
 import gzip
 import http.cookiejar
 import io
+import math
+import re
 import zipfile
 import time as _time
 import urllib.error
@@ -271,7 +273,8 @@ def parse_bhavcopy(data):
                     "expiry": date.fromisoformat(r["XpryDt"]), "strike": _num(r["StrkPric"]),
                     "right": r["OptnTp"] or None, "close": float(r["ClsPric"]), "settle": float(r["SttlmPric"]),
                     "underlying": _num(r["UndrlygPric"]), "oi": int(float(r["OpnIntrst"] or 0)),
-                    "lot": int(r["NewBrdLotQty"]), "date": date.fromisoformat(r["TradDt"])})
+                    "lot": int(r["NewBrdLotQty"]), "date": date.fromisoformat(r["TradDt"]),
+                    "volume": int(float(r.get("TtlTradgVol") or 0))})
     return out
 
 
@@ -304,6 +307,141 @@ def basis_ratio(fut_row):
 
 def is_expiry_day(rows, symbol, d):
     return any(f["expiry"] == d for f in futures(rows, symbol))
+
+
+# ---------------------------------------------------------------- options
+
+def norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_price(right, spot, strike, years, vol, rate=0.06):
+    """Black-Scholes premium, no dividend. right CE or PE; years 0 = intrinsic value."""
+    if years <= 0 or vol <= 0:
+        return max(spot - strike, 0.0) if right == "CE" else max(strike - spot, 0.0)
+    sd = vol * math.sqrt(years)
+    d1 = (math.log(spot / strike) + (rate + vol * vol / 2.0) * years) / sd
+    d2 = d1 - sd
+    disc = strike * math.exp(-rate * years)
+    if right == "CE":
+        return spot * norm_cdf(d1) - disc * norm_cdf(d2)
+    return disc * norm_cdf(-d2) - spot * norm_cdf(-d1)
+
+
+def implied_vol(right, premium, spot, strike, years, rate=0.06):
+    """The volatility (0.01 to 3.00) that prices premium, by bisection to 1e-6 on the price."""
+    disc = strike * math.exp(-rate * max(years, 0))
+    intrinsic = max(spot - disc, 0.0) if right == "CE" else max(disc - spot, 0.0)
+    top = spot if right == "CE" else disc
+    if years <= 0:
+        raise ValueError("no implied volatility: the option has expired")
+    if premium < intrinsic:
+        raise ValueError("no implied volatility: premium %.2f is under the intrinsic value %.2f" % (premium, intrinsic))
+    if premium >= top:
+        raise ValueError("no implied volatility: premium %.2f is not under the %s %.2f"
+                         % (premium, "index" if right == "CE" else "discounted strike", top))
+    lo, hi = 0.01, 3.00
+    if not bs_price(right, spot, strike, years, lo, rate) <= premium <= bs_price(right, spot, strike, years, hi, rate):
+        raise ValueError("no implied volatility: premium %.2f is outside what 1%% to 300%% volatility gives" % premium)
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        p = bs_price(right, spot, strike, years, mid, rate)
+        if abs(p - premium) < 1e-6:
+            return mid
+        lo, hi = (mid, hi) if p < premium else (lo, mid)
+    return (lo + hi) / 2.0
+
+
+def option_price(right, index, ratio, strike, years, vol, rate=0.06):
+    """Black-76: the option on the forward index x ratio (bs_price with spot = F e^(-rT))."""
+    return bs_price(right, index * ratio * math.exp(-rate * max(years, 0)), strike, years, vol, rate)
+
+
+def option_iv(right, premium, index, ratio, strike, years, rate=0.06):
+    return implied_vol(right, premium, index * ratio * math.exp(-rate * max(years, 0)), strike, years, rate)
+
+
+def years_to_expiry(now_ist, expiry):
+    """Calendar minutes to 15:30 IST on expiry / (365 x 1440); 0 after it."""
+    end = datetime.combine(expiry, CLOSE, IST)
+    return max((end - now_ist).total_seconds() / 60.0, 0.0) / (365 * 1440.0)
+
+
+WEEK_CODE = "123456789OND"
+OPT_NAME = re.compile(r"^([A-Z&\-]+?)(\d{2})(?:([1-9OND])(\d{2})|([A-Z]{3}))(\d+(?:\.\d+)?)(CE|PE)$")
+
+
+def option_symbol(symbol, expiry, strike, right, weekly):
+    """NIFTY26N0924400PE (weekly: YY, month code 1-9/O/N/D, DD) or NIFTY26NOV24400CE (monthly)."""
+    k = ("%d" % strike) if float(strike) == int(strike) else ("%g" % strike)
+    when = ("%s%02d" % (WEEK_CODE[expiry.month - 1], expiry.day)) if weekly else MONTHS[expiry.month - 1]
+    return "%s%02d%s%s%s" % (symbol, expiry.year % 100, when, k, right)
+
+
+def parse_option_symbol(text):
+    """{symbol, expiry (None for a monthly name), month YYYY-MM, strike, right, weekly}, or None."""
+    m = OPT_NAME.match(str(text or "").upper())
+    if not m or (m.group(5) and m.group(5) not in MONTHS):
+        return None
+    yy = 2000 + int(m.group(2))
+    if m.group(3):
+        month = WEEK_CODE.index(m.group(3)) + 1
+        exp = date(yy, month, int(m.group(4)))
+    else:
+        month, exp = MONTHS.index(m.group(5)) + 1, None
+    return {"symbol": m.group(1), "expiry": exp, "month": "%d-%02d" % (yy, month), "strike": float(m.group(6)),
+            "right": m.group(7), "weekly": bool(m.group(3))}
+
+
+def _options(rows, symbol, expiry=None):
+    return [r for r in rows if r["kind"] == "opt" and r["symbol"] == symbol and (expiry is None or r["expiry"] == expiry)]
+
+
+def option_expiries(rows, symbol):
+    return sorted({r["expiry"] for r in _options(rows, symbol)})
+
+
+def is_monthly(rows, symbol, expiry):
+    """The last expiry of its month for that symbol (NSE names it NIFTY26OCT..., not a weekly)."""
+    return expiry == max(e for e in option_expiries(rows, symbol) if (e.year, e.month) == (expiry.year, expiry.month))
+
+
+def strikes(rows, symbol, expiry):
+    return sorted({r["strike"] for r in _options(rows, symbol, expiry)})
+
+
+def atm_strike(strike_list, spot):
+    return min(strike_list, key=lambda k: (abs(k - spot), k))
+
+
+def pick_strike(strike_list, spot, right, steps_otm=0):
+    """ATM, or steps_otm strikes out of the money (higher for a call, lower for a put)."""
+    i = strike_list.index(atm_strike(strike_list, spot)) + (steps_otm if right == "CE" else -steps_otm)
+    if not 0 <= i < len(strike_list):
+        raise ValueError("no strike %d steps out of the money from %.2f" % (steps_otm, spot))
+    return strike_list[i]
+
+
+def option_row(rows, symbol, expiry, strike, right):
+    for r in _options(rows, symbol, expiry):
+        if r["strike"] == float(strike) and r["right"] == right:
+            return r
+    return None
+
+
+def forward_ratio(rows, symbol, expiry, rate=0.06):
+    """Forward / index for one expiry, from put-call parity at the strike nearest the index:
+    F = K + e^(rT) (C - P), with the bhavcopy closes and T = calendar days to expiry / 365."""
+    opts = _options(rows, symbol, expiry)
+    if not opts or not opts[0]["underlying"]:
+        raise ValueError("no %s options expiring %s in the bhavcopy" % (symbol, expiry))
+    und, day = opts[0]["underlying"], opts[0]["date"]
+    for k in sorted(strikes(rows, symbol, expiry), key=lambda k: abs(k - und)):
+        c, p = option_row(rows, symbol, expiry, k, "CE"), option_row(rows, symbol, expiry, k, "PE")
+        if c and p and c["close"] > 0 and p["close"] > 0:
+            years = (expiry - day).days / 365.0
+            return (k + math.exp(rate * years) * (c["close"] - p["close"])) / und
+    raise ValueError("no %s call and put pair expiring %s to read the forward from" % (symbol, expiry))
 
 
 # ------------------------------------------------------------------ fetch
