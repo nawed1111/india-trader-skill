@@ -150,16 +150,31 @@ class SetupScript(unittest.TestCase):
         with open(os.path.join(self.target, ".claude", "settings.json")) as fh:
             settings = json.load(fh)
         self.assertEqual((settings["model"], settings["permissions"]["allow"]), ("opus", ["Bash(ls)"]))
-        # a second run keeps the key file you edited and adds no duplicate rules; an older line
-        # without the GTT tools is kept as it is, with a note
-        old_line = "EXCLUDED_TOOLS=place_order,modify_order,cancel_order"
+        # a second run keeps the key file you edited and adds no duplicate rules. An older line without
+        # the GTT tools gains them: a line there means the order tools are meant to be off, and GTTs are orders
+        keep = [x for x in lines if not x.startswith("EXCLUDED_TOOLS")]
         with open(self.keys, "w") as fh:
-            fh.write("\n".join([x for x in lines if not x.startswith("EXCLUDED_TOOLS")] + [old_line]) + "\n")
+            fh.write("\n".join(keep + ["EXCLUDED_TOOLS=place_order,modify_order,cancel_order"]) + "\n")
         r = self.run_script(self.target)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(old_line, self.key_file())
-        self.assertIn("place_gtt_order", r.stdout)
+        self.assertEqual(self.key_file(), keep + ["EXCLUDED_TOOLS=place_order,modify_order,cancel_order,"
+                                                  "place_gtt_order,modify_gtt_order,delete_gtt_order"])
+        self.assertEqual(stat.S_IMODE(os.stat(self.keys).st_mode), 0o600)
+        self.assertIn("GTT", r.stdout)
         self.assertEqual(self.ask_rules().count("mcp__kite__place_order"), 1)
+        # spaces after the commas are fine (the server trims them): nothing to add, the file is not touched
+        spaced = "EXCLUDED_TOOLS=place_order, modify_order, cancel_order, place_gtt_order, modify_gtt_order, " \
+                 "delete_gtt_order"
+        with open(self.keys, "w") as fh:
+            fh.write("\n".join(keep + [spaced]) + "\n")
+        r = self.run_script(self.target)
+        self.assertEqual(self.key_file(), keep + [spaced])
+        self.assertNotIn("EXCLUDED_TOOLS", r.stdout)
+        # no line at all is a choice to go live: kept as it is
+        with open(self.keys, "w") as fh:
+            fh.write("\n".join(keep) + "\n")
+        self.run_script(self.target)
+        self.assertEqual(self.key_file(), keep)
 
     def test_linux_runs_it_as_a_systemd_user_service(self):
         r = self.run_script(self.target, system="Linux")

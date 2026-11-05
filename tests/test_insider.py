@@ -98,6 +98,19 @@ class Cli(unittest.TestCase):
         with open(self.state) as fh:
             self.assertTrue(json.load(fh)["seen"])
 
+    def test_a_state_file_of_the_wrong_shape_starts_fresh(self):
+        # valid JSON, but not the {"seen": {fingerprint: time}} the tool writes
+        os.makedirs(os.path.dirname(self.state), exist_ok=True)
+        for bad in ('["x"]', '"x"', '{"seen": ["abc"]}', '{"seen": {"abc": 5}}'):
+            with open(self.state, "w") as fh:
+                fh.write(bad)
+            code, out, err = run(["new", "--symbols", "RELIANCE", "--offline", DIR, "--state", self.state,
+                                  "--now", NOW])
+            self.assertEqual(code, 0, (bad, err))
+            self.assertIn("starting fresh", out, bad)
+            with open(self.state) as fh:
+                self.assertTrue(json.load(fh)["seen"], bad)
+
     def test_a_now_without_a_zone_is_ist(self):
         run(["new", "--symbols", "RELIANCE", "--offline", DIR, "--state", self.state, "--now", "2026-11-04 08:30"])
         with open(self.state) as fh:

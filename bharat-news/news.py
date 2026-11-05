@@ -115,23 +115,10 @@ def load_json(path):
 
 def load_state(path):
     """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
-    try:
-        return load_json(path) or {}, None
-    except ValueError as exc:
-        return {}, ("the state file %s could not be read (%s): starting fresh, so items you have seen may show "
-                    "again" % (path, exc))
+    return india.read_state(path, "items you have seen may show again")
 
 
-def save_state(path, state):
-    """Write to a temp file and swap it in: a write cut short leaves the old state, never half of one."""
-    folder = os.path.dirname(path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+save_state = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def watch_from_files(portfolio="trader/portfolio.json", watchlist="trader/watchlist.json",

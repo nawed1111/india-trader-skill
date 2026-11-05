@@ -758,22 +758,7 @@ def read_config(path):
     return cfg if isinstance(cfg, dict) else {}
 
 
-def write_atomic(path, fill):
-    """fill(fh) writes a temp file that is then swapped in: a write cut short leaves the old file."""
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fill(fh)
-    os.replace(tmp, path)
-
-
-def write_json(path, doc):
-    def fill(fh):
-        json.dump(doc, fh, indent=2)
-        fh.write("\n")
-    write_atomic(path, fill)
+write_json = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def money(x):
@@ -803,7 +788,7 @@ def cmd_universe(a):
     t0 = time.time()
     kept, counts = parse_equity_l(nse_file(a, EQUITY_FILE, EQUITY_URL))
     if not a.no_write:
-        write_atomic(a.out, lambda fh: fh.writelines("%s|%s\n" % kv for kv in kept))
+        india.write_atomic(a.out, lambda fh: fh.writelines("%s|%s\n" % kv for kv in kept))
     dropped = {k: v for k, v in counts.items() if k not in ("EQ", "rows")}
     if a.json:
         print(json.dumps({"count": len(kept), "rows": counts.get("rows", 0), "dropped": dropped,

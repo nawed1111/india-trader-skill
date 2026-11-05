@@ -12,8 +12,9 @@ work around the one moment that matters, your yes:
             today (matched by fingerprint) and nobody has decided on it yet.
   approve   records your explicit yes for ONE order, with your reply word for
             word. It refuses "yes to all", "sure", "ok", "haan", a yes that
-            names a different stock, side or amount, a yes with words it cannot
-            check, and any order that is not READY.
+            names a different stock, side, order type or amount ("one share"
+            counts as 1), a yes with words it cannot check, and any order that
+            is not READY.
   decline   records a no.
   result    records what happened: placed (with the broker's order id, or
             the paper fill), denied, or failed.
@@ -75,6 +76,8 @@ PLAIN_WORDS = {"please", "place", "it", "this", "that", "the", "order", "one", "
                "confirmed", "share", "shares", "unit", "units", "lot", "lots", "at", "rs", "of", "for", "market",
                "max", "loss", "take", "profit", "target", "limit", "price", "qty", "quantity"}
 SIDE_WORDS = ("buy", "sell")
+TYPE_WORD = {"market": "market", "limit": "limit", "stop_limit": "limit"}   # what a yes may call each order type
+POINTERS = ("this", "that")   # "this one" points at the order; any other "one" is the number 1
 SEGMENT = "eq_intraday"
 # digits too, as in bharat-risk/check.py: 360ONE26NOVFUT, NIFTYNXT5026NOVFUT, 360ONE26NOV1200CE
 FUT_NAME = re.compile(r"^[A-Z0-9&\-]+?\d{2}[A-Z]{3}FUT$")
@@ -137,15 +140,7 @@ def read_json(path, what, required=True):
         raise TicketError("%s is not valid JSON: %s" % (path, e))
 
 
-def write_json(path, data):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+write_json = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def rec_day(rec):
@@ -292,7 +287,8 @@ def plain(order):
 
 def amount_numbers(order):
     nums = []
-    for k in ("qty", "limit_price", "stop_loss_stop_price", "take_profit_limit_price",
+    # every amount the ticket can show, and the count of lots (not a lot's size: "75" is half of a 150-unit order)
+    for k in ("qty", "lots", "limit_price", "stop_price", "stop_loss_stop_price", "take_profit_limit_price",
               "stop_loss_limit_price"):
         if order.get(k) is not None:
             v = _f(order[k])
@@ -328,6 +324,10 @@ def parse_yes(reply, order, batch_symbols=()):
     wrong = [w for w in words[1:] if w in SIDE_WORDS and w != side]
     if wrong:
         return False, "the reply says %s, but this order is a %s" % (wrong[0], side)
+    typ = str(order.get("type", "market")).lower()
+    other = [w for w in words[1:] if w in ("market", "limit") and w != TYPE_WORD.get(typ)]
+    if other:
+        return False, "the reply says %s, but this order is a %s order" % (other[0], typ.replace("_", " "))
     own = set(re.findall(r"[a-z']+", sym.lower()))
     unknown = [w for w in words[1:] if w not in PLAIN_WORDS and w not in YES_WORDS and w != side and w not in own]
     if unknown:
@@ -335,6 +335,8 @@ def parse_yes(reply, order, batch_symbols=()):
     # the order's own name may carry digits (NIFTY26NOV24000CE): they are not amounts
     rest = re.sub(re.escape(sym), " ", raw, flags=re.I) if sym else raw
     nums = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", rest)]
+    left = re.findall(r"[a-z']+", rest.lower())
+    nums += [1.0 for i, w in enumerate(left) if w == "one" and (i == 0 or left[i - 1] not in POINTERS)]
     want = amount_numbers(order)
     off = [n for n in nums if not any(abs(n - w) < 0.005 for w in want)]
     if off:

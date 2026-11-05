@@ -262,15 +262,7 @@ def write_prices(path, quotes, now_utc, source):
     return doc
 
 
-def _write(path, doc):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+_write = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def _read(path, default):

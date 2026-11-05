@@ -82,6 +82,38 @@ class ExplicitYes(unittest.TestCase):
             self.assertTrue(ticket.parse_yes(r, opt, ["NIFTY26NOV24000CE"])[0], r)
         self.assertFalse(ticket.parse_yes("yes NIFTY26NOV24100CE", opt, ["NIFTY26NOV24000CE"])[0])
 
+    def test_a_count_in_words_is_a_number_too(self):
+        # "one share" is 1, not this order's 73; "this one" points at the order
+        for r in ("yes one share", "yes, one lot", "yes buy one"):
+            self.assertFalse(self.yes(r), r)
+        for r in ("yes this one", "yes, that one, place it"):
+            self.assertTrue(self.yes(r), r)
+        self.assertTrue(self.yes("yes one share", order=rel(qty="1")))
+        self.assertTrue(self.yes("yes 360ONE", order=rel(symbol="360ONE"), batch=("360ONE",)))   # its own name
+
+    def test_a_yes_for_another_order_type(self):
+        lim = rel(type="limit", limit_price="1227.80")
+        for r, o in (("yes at market", lim), ("yes, market order", lim), ("yes at limit", rel()),
+                     ("yes limit price", rel())):
+            ok, why = ticket.parse_yes(r, o, ["RELIANCE"])
+            self.assertFalse(ok, (r, o["type"]))
+            self.assertIn(o["type"], why)
+        self.assertTrue(self.yes("yes at market", order=rel()))
+        self.assertTrue(self.yes("yes limit 1227.80", order=lim))
+
+    def test_every_number_the_ticket_shows_can_be_repeated(self):
+        stop = rel(type="stop", stop_price="1250")
+        stop.pop("order_class", None)
+        for k in ("take_profit_limit_price", "stop_loss_stop_price"):
+            stop.pop(k, None)
+        self.assertIn("1,250", ticket.plain(stop))
+        self.assertTrue(self.yes("yes 73 at 1250", order=stop))
+        fut = {"symbol": "NIFTY26NOVFUT", "exchange": "NFO", "side": "buy", "qty": "150", "lot": 75, "lots": 2,
+               "type": "limit", "limit_price": "24000.00", "time_in_force": "day"}
+        self.assertTrue(ticket.parse_yes("yes 2 lots at 24000", fut, ["NIFTY26NOVFUT"])[0])
+        for r in ("yes 3 lots", "yes 75"):          # a lot's size is not this order's amount: 75 of 150 units
+            self.assertFalse(ticket.parse_yes(r, fut, ["NIFTY26NOVFUT"])[0], r)
+
 
 class TicketShape(unittest.TestCase):
     def test_the_order_fields_leave_out_why_and_plan(self):

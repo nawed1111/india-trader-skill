@@ -715,9 +715,6 @@ def plan_report(s, order, notes=()):
 
 
 def write_orders(path, orders, cfg, source="", now_utc=None):
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
     doc = {
         "created_by": "bharat-budget",
         "created_at": utc_iso(now_utc),
@@ -728,11 +725,7 @@ def write_orders(path, orders, cfg, source="", now_utc=None):
         "source": source,
         "orders": orders,
     }
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+    india.write_json(path, doc)
 
 
 # ---------------------------------------------------------------- main

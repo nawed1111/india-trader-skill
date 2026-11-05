@@ -191,23 +191,10 @@ def load_json(path):
 
 def load_state(path):
     """(state, note). A state file that cannot be read starts fresh, with a note, instead of stopping every run."""
-    try:
-        return load_json(path) or {}, None
-    except ValueError as e:
-        return {}, ("the state file %s could not be read (%s): starting fresh, so rows you have seen may show "
-                    "again" % (path, e))
+    return india.read_state(path, "rows you have seen may show again")
 
 
-def save_state(path, state):
-    """Write to a temp file and swap it in: a write cut short leaves the old state, never half of one."""
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state, fh, indent=2)
-        fh.write("\n")
-    os.replace(tmp, path)
+save_state = india.write_json   # whole or not at all: a write cut short leaves the old file
 
 
 def fingerprint(row):

@@ -74,7 +74,7 @@ batch that is fine order by order but breaks a limit together is caught.
 | size | (entries) under `min_order_inr` or over `max_order_inr` |
 | position | (entries) the stock would be over `max_position_pct` of the account |
 | cash | (entries) the buy would leave less than the cash buffer, or need more than `mis_leverage` x your cash |
-| stop | (entries) no stop while `require_stop` is true; a stop on the wrong side of the entry; live (`"paper": false`), a stop that is only in the plan and not at the broker |
+| stop | (entries) no stop while `require_stop` is true; a stop on the wrong side of the entry; a market or limit order whose fresh price is already past its stop; live (`"paper": false`), a stop that is only in the plan and not at the broker |
 | loss | (entries) qty x (entry minus stop) + round-trip costs at the stop over `max_loss_per_trade_inr` |
 | reward:risk | (entries) (target minus entry) / (entry minus stop) under `min_reward_risk` |
 | costs | (entries) round-trip costs at the target over `max_cost_share` (0.25) of the reward at the target |
@@ -90,7 +90,9 @@ How the numbers work:
 - **The entry it measures from**: the limit price for a limit order. For a
   market order, the HIGHER of the plan's entry and a fresh price from
   `trader/prices.json` (under 15 minutes old); for a short sell
-  (`"allow_short": true`) the LOWER, since its stop is above it.
+  (`"allow_short": true`) the LOWER, since its stop is above it. The size
+  checks (`max_order_inr`, `max_fut_notional_inr`) value a short at the
+  higher one all the same.
 - **Costs** are Zerodha's intraday equity charges from `india.py` (brokerage,
   STT, NSE transaction and investor protection charges, SEBI fee, GST,
   stamp duty), the same numbers bharat-budget sized with. The loss at the

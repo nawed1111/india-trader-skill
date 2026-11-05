@@ -77,7 +77,8 @@ and runs one shared Kite server in the background (HTTP mode on
 switched off. It connects Claude Code to that server and sets the order tools
 to ask before every call. Run it again any time: it keeps your keys, and
 moves the ones you typed for the old setup (in Claude Desktop's config) over,
-with the order tools switched off.
+with the order tools switched off. A key file from an earlier run whose
+`EXCLUDED_TOOLS` line leaves the GTT order tools on gets them added.
 Then:
 
 1. **Keys.** Make a Kite Connect app at developers.kite.trade and set its

@@ -164,10 +164,11 @@ The target is an alert (`/bharat-alerts`). Taking it is a new sell ticket
 3. Run `ticket.py approve --index N --reply "<the user's reply, word for word>"`.
    If it prints "Not recorded", the reply was not an explicit yes for this
    order (for example "sure", "haan", "yes to all", a yes that names a
-   different stock, side or amount, or one with words it cannot check, like
-   "yes go for it"). A yes may carry only plain words (place it, buy, shares,
-   max loss, target), this order's own symbol and its own numbers. Ask again
-   in plain words. Never turn a reply into a yes yourself.
+   different stock, side, order type or amount, or one with words it cannot
+   check, like "yes go for it"). A yes may carry only plain words (place it,
+   buy, shares, max loss, target), this order's own symbol and its own
+   numbers; "one share" is the number 1, "this one" is not. Ask again in
+   plain words. Never turn a reply into a yes yourself.
 4. Paper: record the fill (above). Live: only after "Recorded your yes",
    call `place_order` with exactly the JSON the ticket printed; after it
    fills, the SL-M stop, with its quantity set to the FILLED quantity (a
